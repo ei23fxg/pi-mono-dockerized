@@ -41,19 +41,36 @@ Done. Now just run `pi` in any project directory.
 ## Usage
 
 ```bash
-pi           # start in current directory
-pi rebuild   # force-rebuild the Docker image
+# Interactive session (starts in current directory)
+pi
+pi -c                              # continue last session
+pi -r                              # resume (pick session)
+pi @AGENTS.md                      # load context files
+pi @file1.md @file2.md "prompt"    # context + prompt
 
-# Extension/package management (mirrors host pi CLI)
-pi install npm:pi-subagents     # install from npm
-pi install git:github.com/user/repo  # install from git
-pi install ./local/path         # install from local path
-pi remove npm:pi-subagents      # remove extension
-pi update                       # update all installed extensions
-pi update npm:pi-subagents      # update specific extension
-pi list                         # list installed extensions
-pi config                       # open TUI to configure packages
+# Non-interactive (print mode)
+pi -p "fix the bug in src/app.ts"
+pi -p --model anthropic/claude-sonnet-4 "explain this code" @main.py
+
+# Session management
+pi --session /path/to/session.json  # use specific session
+pi --no-session                     # ephemeral, no saving
+
+# Extension / package management
+pi install npm:pi-subagents
+pi install git:github.com/user/repo
+pi install ./local/path
+pi remove npm:pi-subagents
+pi update                          # update all
+pi update npm:pi-subagents         # update one
+pi list                            # list installed
+pi config                          # TUI for package config
+
+# Image management
+pi rebuild                         # force-rebuild the Docker image
 ```
+
+All arguments are forwarded directly to `pi` inside the container. Only `rebuild` is intercepted by this script.
 
 ## How It Works
 
