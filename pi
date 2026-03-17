@@ -28,6 +28,46 @@ cleanup() {
 
 trap cleanup EXIT
 
+# Handle pi CLI subcommands (install, remove, update, list, config) by forwarding to container
+PI_CLI_COMMANDS="install remove uninstall update list config"
+PI_COMMAND="${1:-}"
+if [[ -n "${PI_COMMAND}" && "${PI_COMMAND}" != "rebuild" ]]; then
+    for cmd in ${PI_CLI_COMMANDS}; do
+        if [[ "${PI_COMMAND}" == "${cmd}" ]]; then
+            # Ensure image exists
+            if [[ -z "$(docker images -q "${PI_IMAGE_NAME}" 2>/dev/null)" ]]; then
+                echo "Building pi image..."
+                TEMP_BUILD_DIR=$(mktemp -d)
+                cat > "${TEMP_BUILD_DIR}/Dockerfile" <<'DOCKERFILE'
+FROM node:22-bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl wget ffmpeg imagemagick jq make git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+RUN npm install -g @mariozechner/pi-coding-agent@latest
+RUN npm install -g @steipete/summarize@latest
+RUN mkdir -p /home/hostuser/.pi /home/hostuser/.local/bin \
+    && chmod 777 /home/hostuser /home/hostuser/.pi \
+    && chmod 755 /home/hostuser/.local /home/hostuser/.local/bin
+ENV PATH="/usr/local/lib/node_modules/.bin:/usr/local/bin:/home/hostuser/.local/bin:${PATH}"
+WORKDIR /home/hostuser
+DOCKERFILE
+                docker build -t "${PI_IMAGE_NAME}" "${TEMP_BUILD_DIR}"
+                rm -rf "${TEMP_BUILD_DIR}"
+            fi
+            mkdir -p "${PI_FOLDER}"
+            shift
+            docker run -it --rm \
+                --user "$(id -u):$(id -g)" \
+                -e HOME=/home/hostuser \
+                -v "${PI_FOLDER}":/home/hostuser/.pi \
+                "${PI_IMAGE_NAME}" \
+                /bin/sh -c "export PATH=\"/usr/local/lib/node_modules/.bin:/usr/local/bin:/home/hostuser/.local/bin:\${PATH}\" && pi ${PI_COMMAND} $*"
+            exit $?
+        fi
+    done
+fi
+
 REBUILD=0
 if [[ "${1:-}" == "rebuild" ]]; then
     REBUILD=1

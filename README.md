@@ -43,6 +43,16 @@ Done. Now just run `pi` in any project directory.
 ```bash
 pi           # start in current directory
 pi rebuild   # force-rebuild the Docker image
+
+# Extension/package management (mirrors host pi CLI)
+pi install npm:pi-subagents     # install from npm
+pi install git:github.com/user/repo  # install from git
+pi install ./local/path         # install from local path
+pi remove npm:pi-subagents      # remove extension
+pi update                       # update all installed extensions
+pi update npm:pi-subagents      # update specific extension
+pi list                         # list installed extensions
+pi config                       # open TUI to configure packages
 ```
 
 ## How It Works
