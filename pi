@@ -56,14 +56,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv for root (accessible via PATH for all users)
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Install pi-coding-agent and summarize globally
-RUN npm install -g @mariozechner/pi-coding-agent@latest
-RUN npm install -g @steipete/summarize@latest
+# Install pi-coding-agent and summarize globally (always fetch latest)
+RUN npm cache clean --force && npm install -g @mariozechner/pi-coding-agent@latest
+RUN npm cache clean --force && npm install -g @steipete/summarize@latest
 
 # Create writable home directory structure for non-root users
 # Pre-create .pi directory with open permissions so --user works
-RUN mkdir -p /home/hostuser/.pi /home/hostuser/.local/bin \
+# Also make global node_modules and bin writable for non-root npm installs
+RUN mkdir -p /home/hostuser/.pi /home/hostuser/.local/bin /usr/local/lib/node_modules /usr/local/bin \
     && chmod 777 /home/hostuser /home/hostuser/.pi \
+    && chmod 777 /usr/local/lib/node_modules /usr/local/bin \
     && chmod 755 /home/hostuser/.local /home/hostuser/.local/bin
 
 ENV PATH="/usr/local/lib/node_modules/.bin:/usr/local/bin:/home/hostuser/.local/bin:${PATH}"
