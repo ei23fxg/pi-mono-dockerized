@@ -39,7 +39,7 @@ build_image() {
     echo "Building pi image..."
     TEMP_BUILD_DIR=$(mktemp -d)
     cat > "${TEMP_BUILD_DIR}/Dockerfile" <<'EOF'
-FROM node:22-bookworm
+FROM node:bookworm
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
