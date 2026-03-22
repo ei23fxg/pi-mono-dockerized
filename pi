@@ -7,6 +7,7 @@ fi
 
 set -euo pipefail
 
+# --- Konfiguration ---
 CURRENT_DIR_HASH=$(printf '%s' "$PWD" | md5sum | cut -d' ' -f1)
 CURRENT_DIR_HASH_SHORT="${CURRENT_DIR_HASH: -6}"
 PROJECT_NAME="$(basename "$(pwd)")"
@@ -18,266 +19,149 @@ PI_CONTAINER_NAME_PREFIX="pi-"
 PI_CONTAINER_NAME="${PI_CONTAINER_NAME_PREFIX}${CURRENT_DIR_HASH}"
 PI_IMAGE_NAME="pi:latest"
 PI_FOLDER="$HOME/.pi"
+PI_GLOBAL_VOLUME="pi-global-packages"
+
 PI_DEFAULT_IGNORED_FILES=(.env .deploy .secret .git .build .vscode .gitmodules .pi .aiignore .aiexclude .copilotignore .gitignore .geminiignore .codeiumignore .cursorignore .DS_Store)
 PI_IGNORE_CONFIGS=(.aiignore .aiexclude .copilotignore .gitignore .geminiignore .codeiumignore .cursorignore)
 PI_EMPTY_DIR=$(mktemp -d)
 
 cleanup() {
-    rm -rf "$PI_EMPTY_DIR" 2>/dev/null || sleep 1 && rm -rf "$PI_EMPTY_DIR" || sleep 1 && rm -rf "$PI_EMPTY_DIR"
+    rm -rf "$PI_EMPTY_DIR" 2>/dev/null || true
 }
-
 trap cleanup EXIT
 
 # ---------------------------------------------------------------------------
-# Helper: build the pi Docker image if it doesn't exist
+# Helper: Docker Image bauen
 # ---------------------------------------------------------------------------
 build_image() {
-    local extra_args=()
-    if [[ "${1:-}" == "--no-cache" ]]; then
-        extra_args+=(--no-cache)
-    fi
-    echo "Building pi image..."
+    echo "Building pi base image (VM-Style)..."
     TEMP_BUILD_DIR=$(mktemp -d)
-    cat > "${TEMP_BUILD_DIR}/Dockerfile" <<'EOF'
+    cat > "${TEMP_BUILD_DIR}/Dockerfile" <<EOF
 FROM node:bookworm
 
-# Install system dependencies
+# System-Abhängigkeiten + Python
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    wget \
-    ffmpeg \
-    imagemagick \
-    jq \
-    make \
-    git \
-    ca-certificates \
+    curl wget ffmpeg imagemagick jq make git ca-certificates \
+    python3 python3-pip python3-venv python3-full \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv for root (accessible via PATH for all users)
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+RUN ln -s /usr/bin/python3 /usr/bin/python
 
-# Install pi-coding-agent and summarize globally (always fetch latest)
-RUN npm cache clean --force && npm install -g @mariozechner/pi-coding-agent@latest
-RUN npm cache clean --force && npm install -g @steipete/summarize@latest
+# UV GLOBAL
+RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
 
-# Create writable home directory structure for non-root users
-# Pre-create .pi directory with open permissions so --user works
-# Also make global node_modules and bin writable for non-root npm installs
-RUN mkdir -p /home/hostuser/.pi /home/hostuser/.local/bin /usr/local/lib/node_modules /usr/local/bin \
-    && chmod 777 /home/hostuser /home/hostuser/.pi \
-    && chmod 777 /usr/local/lib/node_modules /usr/local/bin \
-    && chmod 755 /home/hostuser/.local /home/hostuser/.local/bin
+# PERSISTENZ-KONFIGURATION
+ENV NPM_CONFIG_PREFIX=/home/hostuser/.npm-global
+ENV PYTHONUSERBASE=/home/hostuser/.python-local
+ENV PATH="/home/hostuser/.npm-global/bin:/home/hostuser/.python-local/bin:/usr/local/bin:\${PATH}"
+# Erlaubt dem Agenten pip installs in sein persistentes Verzeichnis
+ENV PIP_USER=true
 
-ENV PATH="/usr/local/lib/node_modules/.bin:/usr/local/bin:/home/hostuser/.local/bin:${PATH}"
-
-# Default workdir – will be overridden by -v mount
-WORKDIR /home/hostuser
+RUN mkdir -p /home/hostuser/.pi /home/hostuser/.npm-global /home/hostuser/.python-local \
+    && chmod -R 777 /home/hostuser \
+    && chmod 777 /
 EOF
-    docker build "${extra_args[@]}" -t "${PI_IMAGE_NAME}" -f "${TEMP_BUILD_DIR}/Dockerfile" "${TEMP_BUILD_DIR}"
+    docker build -t "${PI_IMAGE_NAME}" -f "${TEMP_BUILD_DIR}/Dockerfile" "${TEMP_BUILD_DIR}"
     rm -rf "${TEMP_BUILD_DIR}"
 }
 
 # ---------------------------------------------------------------------------
-# Helper: run pi in a throwaway container with ~/.pi mounted (no project)
+# Helper: Volume & Bootstrap
 # ---------------------------------------------------------------------------
-run_pi_config() {
-    local cmd="$1"
-    shift
+bootstrap_environment() {
     if [[ -z "$(docker images -q "${PI_IMAGE_NAME}" 2>/dev/null)" ]]; then
         build_image
     fi
-    mkdir -p "${PI_FOLDER}"
-    docker run -it --rm \
+
+    docker volume create "${PI_GLOBAL_VOLUME}" > /dev/null
+    docker run --rm -v "${PI_GLOBAL_VOLUME}:/data" busybox chown -R "$(id -u):$(id -g)" /data
+
+    # Check ob pi installiert ist
+    if ! docker run --rm \
         --user "$(id -u):$(id -g)" \
-        -e HOME=/home/hostuser \
-        -v "${PI_FOLDER}":/home/hostuser/.pi \
+        -v "${PI_GLOBAL_VOLUME}:/home/hostuser" \
         "${PI_IMAGE_NAME}" \
-        /bin/sh -c "export PATH=\"/usr/local/lib/node_modules/.bin:/usr/local/bin:/home/hostuser/.local/bin:\${PATH}\" && pi ${cmd} $*"
+        ls /home/hostuser/.npm-global/bin/pi >/dev/null 2>&1; then
+        
+        echo "Initializing pi agent in volume..."
+        docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/home/hostuser \
+            -v "${PI_FOLDER}:/home/hostuser/.pi" \
+            -v "${PI_GLOBAL_VOLUME}:/home/hostuser" \
+            "${PI_IMAGE_NAME}" \
+            /bin/sh -c "npm install -g @mariozechner/pi-coding-agent@latest @steipete/summarize@latest"
+    fi
 }
 
 # ---------------------------------------------------------------------------
-# Helper: run pi in a project container (project + ~/.pi mounted)
+# Haupt-Ausführung
 # ---------------------------------------------------------------------------
-run_pi_project() {
-    if [[ -z "$(docker images -q "${PI_IMAGE_NAME}" 2>/dev/null)" ]]; then
-        build_image
-    fi
-
-    # Remove any leftover container with same name
-    EXISTING=$(docker ps -aq -f "name=^${PI_CONTAINER_NAME}$" 2>/dev/null || true)
-    if [[ -n "${EXISTING}" ]]; then
-        docker rm -f "${PI_CONTAINER_NAME}" 2>/dev/null || true
-    fi
-
+run_pi() {
+    local mode="$1"
+    shift
+    
+    bootstrap_environment
     mkdir -p "${PI_FOLDER}"
 
-    # --- Build ignore / mount logic (same as before) ---------------------------
-    EXTRA_ARGS=()
+    DOCKER_ARGS=(
+        --rm
+        -it
+        --user "$(id -u):$(id -g)"
+        -e "HOME=/home/hostuser"
+        -v "${PI_FOLDER}:/home/hostuser/.pi"
+        # Wir mounten das gesamte Home-Unterverzeichnis für NPM und Python
+        -v "${PI_GLOBAL_VOLUME}:/home/hostuser"
+    )
 
-    _IGNORED_FILES_LIST="|"
-    _IGNORED_DIRS_LIST="|"
+    if [[ "$mode" == "project" ]]; then
+        DOCKER_ARGS+=(--name "${PI_CONTAINER_NAME}")
+        DOCKER_ARGS+=(-v "$(pwd):${PI_WORK_DIR}")
+        DOCKER_ARGS+=(-e "PI_PROJECT_NAME=${PROJECT_NAME}")
+        
+        docker rm -f "${PI_CONTAINER_NAME}" 2>/dev/null || true
 
-    _contains() {
-        case "$1" in *"|$2|"*) return 0 ;; esac
-        return 1
-    }
-
-    is_inside_ignored_dir() {
-        local dir="${1%/*}"
-        while [[ "${dir}" == */* ]]; do
-            _contains "${_IGNORED_DIRS_LIST}" "${dir}" && return 0
-            dir="${dir%/*}"
-        done
-        _contains "${_IGNORED_DIRS_LIST}" "${dir}" && return 0
-        return 1
-    }
-
-    add_ignore_dir() {
-        local dir="$1"
-        _contains "${_IGNORED_DIRS_LIST}" "${dir}" && return
-        echo "Ignoring directory ${dir}"
-        _IGNORED_DIRS_LIST="${_IGNORED_DIRS_LIST}${dir}|"
-        EXTRA_ARGS+=(-v "${PI_EMPTY_DIR}:${PI_WORK_DIR}/${dir}")
-    }
-
-    add_ignore_file() {
-        local file="$1"
-        _contains "${_IGNORED_FILES_LIST}" "${file}" && return
-        is_inside_ignored_dir "${file}" && return
-        echo "Ignoring file ${file}"
-        _IGNORED_FILES_LIST="${_IGNORED_FILES_LIST}${file}|"
-        EXTRA_ARGS+=(-v "/dev/null:${PI_WORK_DIR}/${file}")
-    }
-
-    # Collect all ignore patterns from all config files (local + global) in one pass
-    ALL_PATTERNS=()
-    for ignore_config in "${PI_IGNORE_CONFIGS[@]}"; do
-        for config_path in "./${ignore_config}" "${PI_DOCKER_CONFIG_ROOT}/${ignore_config}"; do
-            [[ -f "${config_path}" ]] || continue
-            while IFS= read -r pattern || [[ -n "${pattern}" ]]; do
-                [[ -z "${pattern}" || "${pattern}" == \#* ]] && continue
-                ALL_PATTERNS+=("${pattern}")
-            done < "${config_path}"
-        done
-    done
-
-    # Collect matched files/dirs: defaults + single find for all patterns
-    MATCHED_FILES=()
-    MATCHED_DIRS=()
-
-    for file in "${PI_DEFAULT_IGNORED_FILES[@]}"; do
-        if [[ -f "./${file}" ]]; then
-            MATCHED_FILES+=("${file}")
-        elif [[ -d "./${file}" ]]; then
-            MATCHED_DIRS+=("${file}")
-        fi
-    done
-
-    # Build a single find command with all patterns ORed together
-    if [[ ${#ALL_PATTERNS[@]} -gt 0 ]]; then
-        FIND_ARGS=(-mindepth 1)
-        FIND_ARGS+=( '(' -name "${ALL_PATTERNS[0]}" )
-        for ((i = 1; i < ${#ALL_PATTERNS[@]}; i++)); do
-            FIND_ARGS+=(-o -name "${ALL_PATTERNS[$i]}")
-        done
-        FIND_ARGS+=( ')' -print0 )
-
-        while IFS= read -r -d '' match; do
-            match="${match#./}"
-            if [[ -f "./${match}" ]]; then
-                MATCHED_FILES+=("${match}")
-            elif [[ -d "./${match}" ]]; then
-                MATCHED_DIRS+=("${match}")
+        for file in "${PI_DEFAULT_IGNORED_FILES[@]}"; do
+            if [[ -d "./$file" ]]; then
+                DOCKER_ARGS+=(-v "${PI_EMPTY_DIR}:${PI_WORK_DIR}/$file")
+            elif [[ -f "./$file" ]]; then
+                DOCKER_ARGS+=(-v "/dev/null:${PI_WORK_DIR}/$file")
             fi
-        done < <(find . "${FIND_ARGS[@]}" 2>/dev/null)
-    fi
-
-    # Process dirs first so is_inside_ignored_dir works for files
-    for dir in "${MATCHED_DIRS[@]+"${MATCHED_DIRS[@]}"}"; do
-        add_ignore_dir "${dir}"
-    done
-
-    for file in "${MATCHED_FILES[@]+"${MATCHED_FILES[@]}"}"; do
-        add_ignore_file "${file}"
-    done
-
-    # Display project tree (non-blocking, skip if tree not available)
-    if command -v tree &>/dev/null; then
-        TREE_IGNORE_PATTERNS=("${PI_DEFAULT_IGNORED_FILES[@]}")
-        for pattern in "${ALL_PATTERNS[@]+"${ALL_PATTERNS[@]}"}"; do
-            TREE_IGNORE_PATTERNS+=("${pattern%/}")
         done
-        if [[ ${#TREE_IGNORE_PATTERNS[@]} -gt 0 ]]; then
-            TREE_PATTERN=$(IFS='|'; echo "${TREE_IGNORE_PATTERNS[*]}")
-            echo ""
-            echo "Project tree (filtered by ignore configs):"
-            tree -I "${TREE_PATTERN}" --dirsfirst -a -C || true
-            echo ""
-        fi
+
+        for key in "${PI_API_KEY_FILES[@]}"; do
+            key_file="${PI_DOCKER_CONFIG_ROOT}/$key"
+            [[ -f "$key_file" ]] && DOCKER_ARGS+=(-e "$key=$(cat "$key_file")")
+        done
+        
+        INNER_CMD="cd ${PI_WORK_DIR} && pi $*"
+    else
+        INNER_CMD="pi $*"
     fi
 
-    for api_key_file in "${PI_API_KEY_FILES[@]}"; do
-        api_key_path="${PI_DOCKER_CONFIG_ROOT}/${api_key_file}"
-        if [[ -f "${api_key_path}" ]]; then
-            EXTRA_ARGS+=(-e "${api_key_file}=$(sh -c "${api_key_path}")")
-        fi
-    done
-
-    docker run -it \
-        --rm \
-        --name "${PI_CONTAINER_NAME}" \
-        --user "$(id -u):$(id -g)" \
-        -e "PI_PROJECT_NAME=${PROJECT_NAME}" \
-        -e "HOME=/home/hostuser" \
-        -v "${PI_FOLDER}":/home/hostuser/.pi \
-        -v "$(pwd)":"${PI_WORK_DIR}" \
-        ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
-        "${PI_IMAGE_NAME}" \
-        /bin/sh -c "export PATH=\"/usr/local/lib/node_modules/.bin:/usr/local/bin:/home/hostuser/.local/bin:\${PATH}\" && cd \"${PI_WORK_DIR}\" && pi $*"
+    # Starten mit kombiniertem Path für NPM und Python
+    docker run "${DOCKER_ARGS[@]}" "${PI_IMAGE_NAME}" /bin/sh -c \
+        "export PATH=/home/hostuser/.npm-global/bin:/home/hostuser/.python-local/bin:/usr/local/bin:\$PATH && $INNER_CMD"
 }
 
 # ===========================================================================
-# Main routing
+# Routing
 # ===========================================================================
 
 PI_COMMAND="${1:-}"
 
-# --- rebuild: force-rebuild the Docker image, then continue normally -------
 if [[ "${PI_COMMAND}" == "rebuild" ]]; then
-    # Stop and remove all pi containers
-    EXISTING_CONTAINERS="$(docker ps -aq -f "name=${PI_CONTAINER_NAME_PREFIX}")"
-    if [[ -n "${EXISTING_CONTAINERS}" ]]; then
-        docker stop ${EXISTING_CONTAINERS} 2>/dev/null || true
-        docker rm ${EXISTING_CONTAINERS} 2>/dev/null || true
-    fi
     docker rmi "${PI_IMAGE_NAME}" 2>/dev/null || true
     shift
-    # If nothing left after rebuild, start interactive session
-    if [[ $# -eq 0 ]]; then
-        run_pi_project
-        exit $?
-    fi
-    # Otherwise treat remaining args as the actual command
     PI_COMMAND="${1:-}"
 fi
 
-# --- Config commands (no project mount, only ~/.pi) ------------------------
-# These manage extensions/packages and don't need the project directory.
 PI_CONFIG_COMMANDS="install remove uninstall update list config"
-for cmd in ${PI_CONFIG_COMMANDS}; do
-    if [[ "${PI_COMMAND}" == "${cmd}" ]]; then
-        shift
-        run_pi_config "${cmd}" "$@"
+for cmd in $PI_CONFIG_COMMANDS; do
+    if [[ "${PI_COMMAND}" == "$cmd" ]]; then
+        run_pi "config" "$@"
         exit $?
     fi
 done
 
-# --- Everything else: pass through to pi with project mount ----------------
-# pi                    → interactive session
-# pi -p "prompt"        → print mode
-# pi -c                 → continue session
-# pi -r                 → resume session
-# pi --session path     → specific session
-# pi @file "prompt"     → context file
-# etc.
-run_pi_project "$@"
+run_pi "project" "$@"
