@@ -19,7 +19,7 @@ PI_CONTAINER_NAME_PREFIX="pi-"
 PI_CONTAINER_NAME="${PI_CONTAINER_NAME_PREFIX}${CURRENT_DIR_HASH}"
 PI_IMAGE_NAME="pi:latest"
 PI_FOLDER="$HOME/.pi"
-PI_GLOBAL_VOLUME="pi-global-packages"
+PI_GLOBAL_VOLUME="pi-software-binaries"
 
 PI_DEFAULT_IGNORED_FILES=(.env .deploy .secret .git .build .vscode .gitmodules .pi .aiignore .aiexclude .copilotignore .gitignore .geminiignore .codeiumignore .cursorignore .DS_Store)
 PI_IGNORE_CONFIGS=(.aiignore .aiexclude .copilotignore .gitignore .geminiignore .codeiumignore .cursorignore)
@@ -34,31 +34,30 @@ trap cleanup EXIT
 # Helper: Docker Image bauen
 # ---------------------------------------------------------------------------
 build_image() {
-    echo "Building pi base image (VM-Style)..."
+    echo "Building pi base image..."
     TEMP_BUILD_DIR=$(mktemp -d)
     cat > "${TEMP_BUILD_DIR}/Dockerfile" <<EOF
 FROM node:bookworm
 
-# System-Abhängigkeiten + Python
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl wget ffmpeg imagemagick jq make git ca-certificates \
     python3 python3-pip python3-venv python3-full \
+    golang-go \
     && rm -rf /var/lib/apt/lists/*
 
 RUN ln -s /usr/bin/python3 /usr/bin/python
-
-# UV GLOBAL
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
 
-# PERSISTENZ-KONFIGURATION
-ENV NPM_CONFIG_PREFIX=/home/hostuser/.npm-global
-ENV PYTHONUSERBASE=/home/hostuser/.python-local
-ENV PATH="/home/hostuser/.npm-global/bin:/home/hostuser/.python-local/bin:/usr/local/bin:\${PATH}"
-# Erlaubt dem Agenten pip installs in sein persistentes Verzeichnis
+# Pfade für das persistente SOFTWARE-Volume
+ENV NPM_CONFIG_PREFIX=/opt/pi-packages/npm
+ENV PYTHONUSERBASE=/opt/pi-packages/python
+ENV GOPATH=/opt/pi-packages/go
+ENV PATH="/opt/pi-packages/npm/bin:/opt/pi-packages/python/bin:/opt/pi-packages/go/bin:/usr/local/bin:\${PATH}"
 ENV PIP_USER=true
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
-RUN mkdir -p /home/hostuser/.pi /home/hostuser/.npm-global /home/hostuser/.python-local \
-    && chmod -R 777 /home/hostuser \
+RUN mkdir -p /home/hostuser/.pi /opt/pi-packages/npm /opt/pi-packages/python /opt/pi-packages/go \
+    && chmod -R 777 /home/hostuser /opt/pi-packages \
     && chmod 777 /
 EOF
     docker build -t "${PI_IMAGE_NAME}" -f "${TEMP_BUILD_DIR}/Dockerfile" "${TEMP_BUILD_DIR}"
@@ -66,52 +65,64 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Helper: Volume & Bootstrap
+# Helper: Initialisierung (Settings & Volume)
 # ---------------------------------------------------------------------------
 bootstrap_environment() {
     if [[ -z "$(docker images -q "${PI_IMAGE_NAME}" 2>/dev/null)" ]]; then
         build_image
     fi
 
+    # 1. Host-Config Folder (.pi) vorbereiten
+    # Wir erstellen ihn auf dem Host VOR dem Mount, damit er deinem User gehört
+    mkdir -p "${PI_FOLDER}"
+    [[ ! -f "${PI_FOLDER}/settings.json" ]] && echo "{}" > "${PI_FOLDER}/settings.json"
+    
+    # 2. Software-Volume für NPM/Python binaries
     docker volume create "${PI_GLOBAL_VOLUME}" > /dev/null
+    # Fix Permissions im Volume (einmalig)
     docker run --rm -v "${PI_GLOBAL_VOLUME}:/data" busybox chown -R "$(id -u):$(id -g)" /data
 
-    # Check ob pi installiert ist
+    # 3. Pi Agent Check (Installation im Volume, falls nötig)
     if ! docker run --rm \
         --user "$(id -u):$(id -g)" \
-        -v "${PI_GLOBAL_VOLUME}:/home/hostuser" \
+        -v "${PI_GLOBAL_VOLUME}:/opt/pi-packages" \
         "${PI_IMAGE_NAME}" \
-        ls /home/hostuser/.npm-global/bin/pi >/dev/null 2>&1; then
+        ls /opt/pi-packages/npm/bin/pi >/dev/null 2>&1; then
         
-        echo "Initializing pi agent in volume..."
+        echo "Installing pi coding agent into persistent volume..."
         docker run --rm \
             --user "$(id -u):$(id -g)" \
-            -e HOME=/home/hostuser \
-            -v "${PI_FOLDER}:/home/hostuser/.pi" \
-            -v "${PI_GLOBAL_VOLUME}:/home/hostuser" \
+            -v "${PI_GLOBAL_VOLUME}:/opt/pi-packages" \
             "${PI_IMAGE_NAME}" \
             /bin/sh -c "npm install -g @mariozechner/pi-coding-agent@latest @steipete/summarize@latest"
     fi
 }
 
 # ---------------------------------------------------------------------------
-# Haupt-Ausführung
+# Ausführung
 # ---------------------------------------------------------------------------
 run_pi() {
     local mode="$1"
     shift
     
     bootstrap_environment
-    mkdir -p "${PI_FOLDER}"
 
+    # DOCKER_ARGS Array
     DOCKER_ARGS=(
         --rm
         -it
         --user "$(id -u):$(id -g)"
         -e "HOME=/home/hostuser"
+        # DER ENTSCHEIDENDE MOUNT: .pi Verzeichnis direkt spiegeln
         -v "${PI_FOLDER}:/home/hostuser/.pi"
-        # Wir mounten das gesamte Home-Unterverzeichnis für NPM und Python
-        -v "${PI_GLOBAL_VOLUME}:/home/hostuser"
+        # Das Software-Volume (NPM/Python Pakete)
+        -v "${PI_GLOBAL_VOLUME}:/opt/pi-packages"
+        # Umgebungsvariablen für das Volume
+        -e "NPM_CONFIG_PREFIX=/opt/pi-packages/npm"
+        -e "PYTHONUSERBASE=/opt/pi-packages/python"
+        -e "GOPATH=/opt/pi-packages/go"
+        -e "PIP_USER=true"
+        -e "PIP_BREAK_SYSTEM_PACKAGES=1"
     )
 
     if [[ "$mode" == "project" ]]; then
@@ -121,6 +132,7 @@ run_pi() {
         
         docker rm -f "${PI_CONTAINER_NAME}" 2>/dev/null || true
 
+        # Ignores via /dev/null mounts
         for file in "${PI_DEFAULT_IGNORED_FILES[@]}"; do
             if [[ -d "./$file" ]]; then
                 DOCKER_ARGS+=(-v "${PI_EMPTY_DIR}:${PI_WORK_DIR}/$file")
@@ -129,6 +141,7 @@ run_pi() {
             fi
         done
 
+        # API Keys durchreichen
         for key in "${PI_API_KEY_FILES[@]}"; do
             key_file="${PI_DOCKER_CONFIG_ROOT}/$key"
             [[ -f "$key_file" ]] && DOCKER_ARGS+=(-e "$key=$(cat "$key_file")")
@@ -139,17 +152,13 @@ run_pi() {
         INNER_CMD="pi $*"
     fi
 
-    # Starten mit kombiniertem Path für NPM und Python
+    # Startbefehl
     docker run "${DOCKER_ARGS[@]}" "${PI_IMAGE_NAME}" /bin/sh -c \
-        "export PATH=/home/hostuser/.npm-global/bin:/home/hostuser/.python-local/bin:/usr/local/bin:\$PATH && $INNER_CMD"
+        "export PATH=/opt/pi-packages/npm/bin:/opt/pi-packages/python/bin:/opt/pi-packages/go/bin:/usr/local/bin:\$PATH && $INNER_CMD"
 }
 
-# ===========================================================================
-# Routing
-# ===========================================================================
-
+# --- Routing ---
 PI_COMMAND="${1:-}"
-
 if [[ "${PI_COMMAND}" == "rebuild" ]]; then
     docker rmi "${PI_IMAGE_NAME}" 2>/dev/null || true
     shift
