@@ -39,8 +39,10 @@ versions. `/share` and `/bug` remain available as manual actions.
 
 ## Extra mounts and system prompt
 
-`mounts.conf` is optional; the commented examples show the syntax. Active
-lines are mounted into every container on the next start:
+`mounts.conf` holds permanent extra mounts. The wrapper also manages one
+entry for the fixed Pi working home (`~/documents/pi-home` by default, mounted
+at `/home/hostuser/pi-home`); Pi starts there unless `pi -m` mounts the current
+project. Active user lines are mounted into every container on the next start:
 
 ```text
 ~/shared:/shared:ro
@@ -51,6 +53,12 @@ lines are mounted into every container on the next start:
 complete replacement use `~/.pi/agent/SYSTEM.md`; for project-specific
 instructions use a project-root `AGENTS.md` (project `.pi` files are hidden by
 the wrapper).
+
+With `pi -m DATEI...` only the listed files are mounted, at their relative
+paths, instead of the whole current directory. This is useful for focused
+work or for explicitly mounting a normally hidden file. Existing files are
+consumed until the first option/non-file/`--`; use `--` before a prompt that
+could be mistaken for a file name.
 
 ## MCP
 
@@ -117,8 +125,9 @@ skill can coexist; the skill is the lightweight, on-demand option.
 pi web
 ```
 
-to start Pi and execute `/web` immediately. Alternatively start Pi normally
-and enter `/web`; the command prints a local URL. The wrapper always uses Docker host networking
+to start Pi in the fixed Pi home and execute `/web` immediately. Use
+`pi -m web` to open the Web UI for the current project. Alternatively start Pi
+normally and enter `/web`; the command prints a local URL. The wrapper always uses Docker host networking
 (`--network host`) so the container's `127.0.0.1` is reachable from a browser on
 the same Linux host. Git is enabled by default, including the pi-webapp Git
 panel; set `PI_ALLOW_GIT=0` to hide `.git`, `.gitignore`, and `.gitmodules`.

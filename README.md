@@ -27,6 +27,7 @@ Default Pi setup:
 - **Global `llm-wiki` skill** — build a persistent Markdown wiki from raw sources on demand
 - **Privacy defaults** — no install telemetry, no analytics, no Sentry, update checks enabled, project trust off
 - **Git by default** — `.git`, `.gitignore`, and `.gitmodules` are visible; local commits use your host Git identity
+- **Fixed Pi home** — starts in `~/documents/pi-home`; the current directory is mounted only with `pi -m`
 
 > The first run builds the image, installs Pi, and downloads the default Pi packages — expect this to take a few minutes.
 
@@ -57,9 +58,50 @@ cp examples/pi/mounts.conf ~/.pi/mounts.conf
 
 See the official documentation for providers and models: [pi.dev/docs/latest/models](https://pi.dev/docs/latest/models)
 
+### Fixed Pi working home
+
+By default Pi starts in a fixed working home, independent of where you invoke it:
+
+| Host | Container |
+|---|---|
+| `~/documents/pi-home` | `/home/hostuser/pi-home` |
+
+- The host directory is created with `mkdir -p` if missing.
+- It is mounted through a managed entry in `~/.pi/mounts.conf`, so it is visible and editable there.
+- `$HOME` inside the container points to this directory; Pi's configuration stays at the separate `/home/hostuser/.pi` mount.
+- The current project is **not** mounted by default.
+- `pi -m` mounts the current directory at `/<project>_<hash>` and uses it as the working directory. The fixed home stays available as `$HOME` (`/home/hostuser/pi-home`).
+- `pi -m FILE...` mounts only the listed files, at their relative paths, and uses a temporary project view as the working directory. Other files from the current directory are not mounted.
+- Override the default host path with `PI_HOME_DIR` before the first run; afterwards the source path in `mounts.conf` is authoritative.
+- Keep the container target `/home/hostuser/pi-home`; Pi uses it as `$HOME`.
+- `-m` is a wrapper flag. Pi's model flag remains `--model`.
+
+```bash
+pi          # fixed Pi home
+pi -m       # current directory as working directory
+pi -m -p "fix the tests"
+pi -m web   # project-scoped Web UI
+
+# Selective file mounts
+pi -m README.md TEXT.md            # only these two files
+pi -m README.md "TEXT.md"          # quoted names work too
+pi -m "MY FILE.md"                 # filenames with spaces
+pi -m README.md -p "summarize"     # selected files + prompt
+pi -m README.md -- "summarize"     # force the next argument to be a prompt
+```
+
+File selection rules:
+
+- With no file arguments, `pi -m` mounts the whole directory.
+- Leading arguments that name existing files are mounted individually; the first non-file, option, or `--` stops file detection.
+- Selected files must be inside the current directory. Directories are not accepted mixed with file arguments; use `pi -m` without arguments for the whole directory.
+- Explicitly selected hidden files (`.env`, `.pi/...`) are mounted even though the normal full-project rules would hide them.
+- File edits go to the host files. Other current-directory files are absent; a selection gets its own temporary project view, container, and session.
+- Use `--` if a prompt would otherwise be interpreted as a file name.
+
 ### Extra mounts
 
-The current project directory is always mounted recursively at `/<project>_<hash>`. Add further permanent mounts in `~/.pi/mounts.conf`:
+The current project is mounted recursively at `/<project>_<hash>` only when `pi -m` is used without file arguments; `pi -m FILE...` mounts just those files. Add further permanent mounts in `~/.pi/mounts.conf`:
 
 ```text
 # <host-path>:<container-path>[:ro|:rw]
@@ -87,7 +129,7 @@ Pi has three user-level places for persistent instructions:
 
 The wrapper seeds `APPEND_SYSTEM.md` with a container/environment description if it does not exist. Edit it and start a new session, or run `/reload` in an active session. Existing custom content is preserved.
 
-Project-root `AGENTS.md` files still load as context. Project `.pi/APPEND_SYSTEM.md` and `.pi/SYSTEM.md` are **visible by default** (the rest of `.pi` is hidden), but they are **not applied automatically** because project trust is off (`--no-approve`). Put automatically applied project-specific instructions in the project-root `AGENTS.md` instead.
+Project-root `AGENTS.md` files load as context when the project is mounted with `pi -m`. Project `.pi/APPEND_SYSTEM.md` and `.pi/SYSTEM.md` are **visible in that mode** (the rest of `.pi` is hidden), but they are **not applied automatically** because project trust is off (`--no-approve`). Put automatically applied project-specific instructions in the project-root `AGENTS.md` instead.
 
 ### Alias
 
@@ -103,23 +145,28 @@ Reload your shell:
 source ~/.bashrc
 ```
 
-Done. Now just run `pi` in any project directory.
+Done. Run `pi` for the fixed Pi home, or `pi -m` inside a project directory.
 
 ## Usage
 
 ```bash
-# Interactive session (starts in current directory)
+# Interactive session (starts in the fixed Pi home)
 pi
-pi -c                              # continue last session
+pi -m                              # mount current directory and use it as workdir
+pi -m README.md TEXT.md            # mount only these files
+pi -m "MY FILE.md"                 # quoted filename with spaces
+pi -c                              # continue last home session
+pi -m -c                           # continue current project session
 pi -r                              # resume (pick session)
-pi @AGENTS.md                      # load context files
-pi @file1.md @file2.md "prompt"    # context + prompt
+pi -m @AGENTS.md                   # load project context
+pi -m @file1.md @file2.md "prompt" # context + prompt
 
 # Web UI
-pi web                             # start Pi and run /web automatically
+pi web                             # fixed home + /web
+pi -m web                          # project + /web
 
 # One-off exposure of default-hidden project files
-pi --show-hidden                    # .env, .pi, etc. visible for this run
+pi --show-hidden -m                 # .env, .pi, etc. visible for this project run
 
 # In-session commands
 /web                               # open the pi-webapp browser workspace
@@ -128,8 +175,9 @@ pi --show-hidden                    # .env, .pi, etc. visible for this run
 /share                             # upload the session manually (review first)
 
 # Non-interactive (print mode)
-pi -p "fix the bug in src/app.ts"
-pi -p --model anthropic/claude-sonnet-4 "explain this code" @main.py
+pi -m -p "fix the bug in src/app.ts"
+pi -m README.md -p "summarize this file"
+pi -m -p --model anthropic/claude-sonnet-4 "explain this code" @main.py
 
 # Session management
 pi --session /path/to/session.json  # use specific session
@@ -166,8 +214,8 @@ The wrapper enforces these defaults on every container start:
 - **Update checks on:** the wrapper does not set `PI_SKIP_VERSION_CHECK`, so Pi can show available updates. This is a version request to `pi.dev`, not install telemetry.
 - **No Sentry from the Web UI:** `PI_WEB_SENTRY_ENABLED=false`; pi-webapp's Sentry integration is off.
 - **Manual sharing:** `/share` and `/bug` are available but never automatic. Review the session before uploading.
-- **Project resources off by default:** `defaultProjectTrust: "never"` plus `--no-approve`; project `.pi` is also hidden from the container. Project `AGENTS.md`/`CLAUDE.md` context still loads, but project extensions and skills do not. Pass `--approve` explicitly for a one-off trusted run.
-- **No access to other sessions:** a temporary sessions root containing only the current project's `--<container-path>--` subdirectory is mounted over `~/.pi/agent/sessions`. The session picker, `--resume`, and the Web UI therefore see only this project's sessions; other projects' session files are not visible in the container. Existing sessions for the same project are preserved.
+- **Project resources off by default:** `defaultProjectTrust: "never"` plus `--no-approve`; project `.pi` is also hidden from the container. With `pi -m`, project `AGENTS.md`/`CLAUDE.md` context still loads, but project extensions and skills do not. Pass `--approve` explicitly for a one-off trusted run.
+- **No access to other sessions:** a temporary sessions root containing only the active context's subdirectory (fixed Pi home or a `pi -m` project) is mounted over `~/.pi/agent/sessions`. The session picker, `--resume`, and the Web UI therefore see only the active context's sessions; other contexts' session files are not visible in the container. Existing sessions for the same context are preserved.
 
 `/share` and `/bug` are manual upload actions, not telemetry; do not invoke them if you want nothing to leave the machine.
 
@@ -250,7 +298,7 @@ To make Pi commit consistently, add the conventions to `AGENTS.md` (for example:
 pi web
 ```
 
-starts Pi in the current project and executes `/web` as the initial prompt, so the web workspace starts immediately. Alternatively run `pi` and enter `/web` yourself. Either way the command prints a local URL for the browser workspace (chat, files, terminal, Git review); the Pi TUI stays open as long as the web service should run. Git review works by default; set `PI_ALLOW_GIT=0` if you want to hide repository metadata instead.
+starts Pi in the fixed Pi home and executes `/web` as the initial prompt, so the web workspace starts immediately. Use `pi -m web` to open the Web UI for the current project instead. Either way the command prints a local URL for the browser workspace (chat, files, terminal, Git review); the Pi TUI stays open as long as the web service should run. Git review is available when the active workdir is a Git repository; set `PI_ALLOW_GIT=0` if you want to hide repository metadata instead.
 
 The `/web` service runs **inside the same container as Pi**, binds `127.0.0.1` on a random port, and stops when Pi exits. It is not a separate container or a fixed published port. With host networking the printed URL works on the Docker host's loopback; from another machine use an SSH tunnel.
 
@@ -284,7 +332,7 @@ The `/web` service runs **inside the same container as Pi**, binds `127.0.0.1` o
 
   Any HTTP response means the server is listening; the remaining problem is reachability.
 
-The wrapper always uses Docker host networking (`--network host`) because pi-webapp binds `127.0.0.1` inside the container. That makes the printed URL reachable from a browser on the same Linux host, while the Web UI itself still listens only on loopback. The container therefore shares the host network namespace; there is no bridge mode in this wrapper. The Web UI is intentionally scoped to the current project: other projects' sessions are not mounted, so its workspace/session picker cannot see them. The Web UI is not designed to be exposed to the public internet; its terminals and tools run with the same container user permissions as Pi itself.
+The wrapper always uses Docker host networking (`--network host`) because pi-webapp binds `127.0.0.1` inside the container. That makes the printed URL reachable from a browser on the same Linux host, while the Web UI itself still listens only on loopback. The container therefore shares the host network namespace; there is no bridge mode in this wrapper. The Web UI is intentionally scoped to the active context (the fixed Pi home, or a `pi -m` project): other sessions are not mounted, so its workspace/session picker cannot see them. The Web UI is not designed to be exposed to the public internet; its terminals and tools run with the same container user permissions as Pi itself.
 
 ## Configuration reference
 
@@ -293,28 +341,36 @@ The wrapper always uses Docker host networking (`--network host`) because pi-web
 | `PI_CODING_AGENT_VERSION` | `1.5.2` | Pi package version installed in the persistent volume |
 | `PI_RUST_VERSION` | `stable` | Rust toolchain version baked into the image |
 | `PI_ALLOW_GIT` | `1` | Set to `0` to hide `.git`, `.gitignore`, and `.gitmodules`; default exposes them for local commits and Web UI Git review |
-| `PI_SHOW_HIDDEN` | `0` | Set to `1` (or use `pi --show-hidden`) to expose all default-hidden project files for one run |
+| `PI_SHOW_HIDDEN` | `0` | Set to `1` (or use `pi --show-hidden -m`) to expose all default-hidden project files for one full-project run (no file arguments) |
 | `PI_GIT_NAME` | host `user.name` | Git author/committer name inside the container |
 | `PI_GIT_EMAIL` | host `user.email` | Git author/committer email inside the container |
+| `PI_HOME_DIR` | `~/documents/pi-home` | Host source for the fixed Pi home when the managed `mounts.conf` entry is created |
+| `PI_MOUNT_CWD` | `0` | Set to `1` to behave like `pi -m` (mount the current directory) |
 | `PI_MOUNTS_FILE` | `~/.pi/mounts.conf` | Optional config for permanent extra mounts |
 
 Install telemetry/analytics and Sentry are disabled by the wrapper; update checks remain on. `/share` and `/bug` are manual, so use them deliberately.
 
 ## How It Works
 
-Each working directory gets its own container (`pi-<md5-hash>`). Your project is mounted at a readable path inside the container:
+Without `-m`, each Pi home gets one fixed container (`pi-home-<hash>`). The current directory is not mounted:
+
+| Host path | Container path |
+|---|---|
+| `~/documents/pi-home` | `/home/hostuser/pi-home` |
+
+With `pi -m`, the current project is mounted too and gets its own container (`pi-<md5-hash>`):
 
 | Host path | Container path |
 |---|---|
 | `/home/user/my-project` | `/my-project_a1b2c3` |
 
-The path is built from the **directory name** + the **last 6 characters** of the directory's MD5 hash. This keeps it readable while avoiding collisions between identically named directories.
+The project path is built from the **directory name** + the **last 6 characters** of the directory's MD5 hash. This keeps it readable while avoiding collisions between identically named directories. With `pi -m FILE...`, the container name and project path include a hash of the selected file list (`pi-files-...`); only those files are mounted, inside a temporary project view.
 
-`~/.pi/agent` is shared across containers for settings, credentials, models, and installed packages. Sessions are the exception: each project gets its own directory at `~/.pi/agent/sessions/--<container-path>--`; inside the container a temporary sessions root containing only that subdirectory is mounted over `~/.pi/agent/sessions`. Other projects' sessions are therefore not visible. Containers are ephemeral (`--rm`) and cleaned up on exit; the Web UI always uses host networking (see [Web UI](#web-ui)).
+`~/.pi/agent` is shared across containers for settings, credentials, models, and installed packages. Sessions are kept per context: the fixed home has its own session directory, and each `pi -m` project gets `~/.pi/agent/sessions/--<container-path>--`. Inside the container a temporary sessions root containing only the active subdirectory is mounted over `~/.pi/agent/sessions`, so other contexts' sessions are not visible. Containers are ephemeral (`--rm`) and cleaned up on exit; the Web UI always uses host networking (see [Web UI](#web-ui)).
 
 ## File Ignoring
 
-The project directory is mounted recursively, but these **project-relative** paths are hidden by default:
+When a project is mounted with `pi -m` **without file arguments**, these **project-relative** paths are hidden by default. The fixed Pi home and paths from `mounts.conf` are fully visible. Selective `pi -m FILE...` mounts only the files you explicitly name; those explicit files are not filtered by this list.
 
 | Path | Default |
 |---|---|
@@ -323,24 +379,23 @@ The project directory is mounted recursively, but these **project-relative** pat
 | `.pi/` | hidden, **except** `.pi/APPEND_SYSTEM.md` and `.pi/SYSTEM.md`, which stay visible if present |
 | `.git`, `.gitignore`, `.gitmodules` | visible (set `PI_ALLOW_GIT=0` to hide) |
 
-Only the project and the paths from `~/.pi/mounts.conf` are mounted; these rules never expose other host directories.
+Only the fixed Pi home, a `pi -m` project, and paths from `~/.pi/mounts.conf` are mounted; these rules never expose other host directories.
 
 To expose all default-hidden project files for one run:
 
 ```bash
-pi --show-hidden
+pi --show-hidden -m
 # or
-PI_SHOW_HIDDEN=1 pi
+PI_SHOW_HIDDEN=1 pi -m
 ```
 
-This removes only the project-relative ignore mounts. It does **not** mount the host and does not change extra mounts. `--show-hidden` can be combined with other wrapper commands, for example:
+This removes only the project-relative ignore mounts. It does **not** mount the host and does not change extra mounts. It applies to a full project mount; selective file mounts are explicit and unaffected. `--show-hidden` can be combined with other wrapper commands, for example:
 
 ```bash
-pi --show-hidden web
-pi --show-hidden rebuild
+pi --show-hidden -m web
 ```
 
-It overrides `PI_ALLOW_GIT=0` for that run. Hidden paths can contain credentials; use it deliberately.
+It overrides `PI_ALLOW_GIT=0` for that run. Hidden paths can contain credentials; use it deliberately. Without `pi -m` there is no project mount, so the flag has no effect.
 
 The wrapper hides paths by bind-mounting `/dev/null` (files) or an empty directory (directories). It does not evaluate `.gitignore`-style patterns; add further exclusions to `PI_DEFAULT_IGNORED_FILES` in the `pi` script, or keep secrets outside the project directory.
 
@@ -363,6 +418,8 @@ The wrapper hides paths by bind-mounting `/dev/null` (files) or an empty directo
 ```
 
 `~/.pi/agent` is persisted through the `~/.pi` mount. Existing files are never overwritten by the wrapper.
+
+The fixed working home is outside this tree at `~/documents/pi-home` (host) and is mounted to `/home/hostuser/pi-home` via its managed `mounts.conf` entry.
 
 ## Image and volume lifecycle
 
