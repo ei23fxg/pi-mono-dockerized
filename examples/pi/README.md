@@ -40,7 +40,7 @@ versions. `/share` and `/bug` remain available as manual actions.
 ## Extra mounts and system prompt
 
 `mounts.conf` holds permanent extra mounts. The wrapper also manages one
-entry for the fixed Pi working home (`~/documents/pi-home` by default, mounted
+entry for the fixed Pi working home (`~/pi-home` by default, mounted
 at `/home/hostuser/pi-home`); Pi starts there unless `pi -m` mounts the current
 project. Active user lines are mounted into every container on the next start:
 

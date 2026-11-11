@@ -2,7 +2,7 @@
 
 You are running inside a Docker container managed by `pi-mono-dockerized`, based on Debian Bookworm slim.
 
-- **Working home:** Pi starts in `/home/hostuser/pi-home` by default. This is the mounted host directory configured as the Pi home in `/home/hostuser/.pi/mounts.conf` (default on the Docker host: `/home/<user>/documents/pi-home`). `$HOME` points to this directory.
+- **Working home:** Pi starts in `/home/hostuser/pi-home` by default. This is the mounted host directory configured as the Pi home in `/home/hostuser/.pi/mounts.conf` (default on the Docker host: `/home/<user>/pi-home`). `$HOME` points to this directory.
 - **Project:** the current project is mounted **only** when Pi is started with `pi -m`. With `pi -m` and no file arguments the host working directory is mounted at `/<project>_<hash>` and becomes the working directory. With `pi -m FILE...` only those files are mounted, at their relative paths in a temporary project root; other project files are absent. The fixed Pi home is `$HOME` (`/home/hostuser/pi-home`).
 - **Config:** `/home/hostuser/.pi` is mounted from the host and contains Pi settings, auth, packages, and the current session storage. It is separate from the working home.
 - **Extra host directories:** only those configured in `/home/hostuser/.pi/mounts.conf`; respect `:ro` mounts and do not try to write to them.

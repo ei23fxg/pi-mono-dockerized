@@ -36,7 +36,8 @@ PI_GLOBAL_VOLUME="pi-software-binaries"
 
 # Festes Arbeits-Home für Pi. Es wird beim Start angelegt und über einen
 # verwalteten Eintrag in mounts.conf nach /home/hostuser/pi-home gemountet.
-PI_HOME_DIR="${PI_HOME_DIR:-$HOME/documents/pi-home}"
+PI_HOME_DIR="${PI_HOME_DIR:-$HOME/pi-home}"
+PI_HOME_OLD_DEFAULT="$HOME/documents/pi-home"
 PI_HOME_CONTAINER="/home/hostuser/pi-home"
 PI_HOME_HASH=$(printf '%s' "$PI_HOME_DIR" | md5sum | cut -d' ' -f1)
 PI_HOME_ID="${PI_HOME_HASH: -6}"
@@ -233,6 +234,9 @@ EOF
                 elif grep -qF 'the current working directory is mounted at ' "${PI_AGENT_DIR}/APPEND_SYSTEM.md"; then
                     cp "${example_dir}/APPEND_SYSTEM.md" "${PI_AGENT_DIR}/APPEND_SYSTEM.md"
                     echo "Updated ~/.pi/agent/APPEND_SYSTEM.md with the fixed-home environment template."
+                elif grep -qF '/home/<user>/documents/pi-home' "${PI_AGENT_DIR}/APPEND_SYSTEM.md"; then
+                    cp "${example_dir}/APPEND_SYSTEM.md" "${PI_AGENT_DIR}/APPEND_SYSTEM.md"
+                    echo "Updated ~/.pi/agent/APPEND_SYSTEM.md with the new default Pi home path."
                 fi
             fi
         fi
@@ -431,6 +435,7 @@ ensure_home_mount() {
     fi
 
     local line host_path rest target mode
+    # shellcheck disable=SC2094
     while IFS= read -r line || [[ -n "${line}" ]]; do
         line="${line%$'\r'}"
         line="${line#"${line%%[![:space:]]*}"}"
@@ -452,6 +457,37 @@ ensure_home_mount() {
             if [[ -n "${mode}" && "${mode}" != "ro" && "${mode}" != "rw" ]]; then
                 echo "Warning: Pi home mount has an unsupported mode: ${line}" >&2
                 continue
+            fi
+            if [[ "${host_path}" == "${PI_HOME_OLD_DEFAULT}" && "${PI_HOME_DIR}" != "${PI_HOME_OLD_DEFAULT}" ]]; then
+                local tmp
+                # shellcheck disable=SC2094
+                tmp="$(mktemp "${PI_MOUNTS_FILE}.XXXXXX")" || return 1
+                while IFS= read -r l || [[ -n "${l}" ]]; do
+                    local ltrim="${l%$'\r'}"
+                    ltrim="${ltrim#"${ltrim%%[![:space:]]*}"}"
+                    ltrim="${ltrim%"${ltrim##*[![:space:]]}"}"
+                    [[ "${ltrim}" == \~/* ]] && ltrim="$HOME/${ltrim#\~/}"
+                    if [[ "${ltrim}" == "${line}" ]]; then
+                        printf '%s:%s\n' "${PI_HOME_DIR}" "${rest}" >> "${tmp}"
+                    else
+                        printf '%s\n' "${l}" >> "${tmp}"
+                    fi
+                done < "${PI_MOUNTS_FILE}"
+                chmod --reference="${PI_MOUNTS_FILE}" "${tmp}" 2>/dev/null || true
+                # shellcheck disable=SC2094
+                if ! mv "${tmp}" "${PI_MOUNTS_FILE}"; then
+                    rm -f "${tmp}"
+                    return 1
+                fi
+                mkdir -p "${PI_HOME_DIR}"
+                echo "Updated the managed Pi home from ${PI_HOME_OLD_DEFAULT} to ${PI_HOME_DIR}." >&2
+                if [[ "${mode}" == "ro" ]]; then
+                    echo "Warning: Pi home is mounted read-only (${line}); Pi cannot persist files there." >&2
+                fi
+                if [[ -e "${PI_HOME_OLD_DEFAULT}" ]]; then
+                    echo "Warning: existing data was not moved; it remains at ${PI_HOME_OLD_DEFAULT}." >&2
+                fi
+                return
             fi
             mkdir -p "${host_path}" 2>/dev/null || true
             if [[ "${mode}" == "ro" ]]; then

@@ -27,7 +27,7 @@ Default Pi setup:
 - **Global `llm-wiki` skill** — build a persistent Markdown wiki from raw sources on demand
 - **Privacy defaults** — no install telemetry, no analytics, no Sentry, update checks enabled, project trust off
 - **Git by default** — `.git`, `.gitignore`, and `.gitmodules` are visible; local commits use your host Git identity
-- **Fixed Pi home** — starts in `~/documents/pi-home`; the current directory is mounted only with `pi -m`
+- **Fixed Pi home** — starts in `~/pi-home`; the current directory is mounted only with `pi -m`
 
 > The first run builds the image, installs Pi, and downloads the default Pi packages — expect this to take a few minutes.
 
@@ -64,7 +64,7 @@ By default Pi starts in a fixed working home, independent of where you invoke it
 
 | Host | Container |
 |---|---|
-| `~/documents/pi-home` | `/home/hostuser/pi-home` |
+| `~/pi-home` | `/home/hostuser/pi-home` |
 
 - The host directory is created with `mkdir -p` if missing.
 - It is mounted through a managed entry in `~/.pi/mounts.conf`, so it is visible and editable there.
@@ -73,6 +73,7 @@ By default Pi starts in a fixed working home, independent of where you invoke it
 - `pi -m` mounts the current directory at `/<project>_<hash>` and uses it as the working directory. The fixed home stays available as `$HOME` (`/home/hostuser/pi-home`).
 - `pi -m FILE...` mounts only the listed files, at their relative paths, and uses a temporary project view as the working directory. Other files from the current directory are not mounted.
 - Override the default host path with `PI_HOME_DIR` before the first run; afterwards the source path in `mounts.conf` is authoritative.
+- A managed entry still pointing to the previous default `~/documents/pi-home` is updated once to `~/pi-home`; existing data is **not** moved automatically.
 - Keep the container target `/home/hostuser/pi-home`; Pi uses it as `$HOME`.
 - `-m` is a wrapper flag. Pi's model flag remains `--model`.
 
@@ -344,7 +345,7 @@ The wrapper always uses Docker host networking (`--network host`) because pi-web
 | `PI_SHOW_HIDDEN` | `0` | Set to `1` (or use `pi --show-hidden -m`) to expose all default-hidden project files for one full-project run (no file arguments) |
 | `PI_GIT_NAME` | host `user.name` | Git author/committer name inside the container |
 | `PI_GIT_EMAIL` | host `user.email` | Git author/committer email inside the container |
-| `PI_HOME_DIR` | `~/documents/pi-home` | Host source for the fixed Pi home when the managed `mounts.conf` entry is created |
+| `PI_HOME_DIR` | `~/pi-home` | Host source for the fixed Pi home when the managed `mounts.conf` entry is created |
 | `PI_MOUNT_CWD` | `0` | Set to `1` to behave like `pi -m` (mount the current directory) |
 | `PI_MOUNTS_FILE` | `~/.pi/mounts.conf` | Optional config for permanent extra mounts |
 
@@ -356,7 +357,7 @@ Without `-m`, each Pi home gets one fixed container (`pi-home-<hash>`). The curr
 
 | Host path | Container path |
 |---|---|
-| `~/documents/pi-home` | `/home/hostuser/pi-home` |
+| `~/pi-home` | `/home/hostuser/pi-home` |
 
 With `pi -m`, the current project is mounted too and gets its own container (`pi-<md5-hash>`):
 
@@ -419,7 +420,7 @@ The wrapper hides paths by bind-mounting `/dev/null` (files) or an empty directo
 
 `~/.pi/agent` is persisted through the `~/.pi` mount. Existing files are never overwritten by the wrapper.
 
-The fixed working home is outside this tree at `~/documents/pi-home` (host) and is mounted to `/home/hostuser/pi-home` via its managed `mounts.conf` entry.
+The fixed working home is outside this tree at `~/pi-home` (host) and is mounted to `/home/hostuser/pi-home` via its managed `mounts.conf` entry.
 
 ## Image and volume lifecycle
 
