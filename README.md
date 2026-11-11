@@ -207,6 +207,36 @@ To make Pi commit consistently, add the conventions to `AGENTS.md` (for example:
 
 The `/web` service runs **inside the same container as Pi**, binds `127.0.0.1` on a random port, and stops when Pi exits. It is not a separate container or a fixed published port. With host networking the printed URL works on the Docker host's loopback; from another machine use an SSH tunnel.
 
+### `/web` is not reachable
+
+`pi-webapp` binds to `127.0.0.1`, not `0.0.0.0`. Therefore a URL like `http://10.1.1.2:33461/` will not work even when the container uses host networking: the service only listens on the Docker host's loopback.
+
+- **Browser on the Docker host:** open the printed `http://127.0.0.1:<port>/#<token>` URL directly. Check that the container really uses host networking:
+
+  ```bash
+  docker inspect $(docker ps -q --filter name=pi-) --format '{{.HostConfig.NetworkMode}}'
+  ```
+
+  It must print `host`. If it prints `bridge`, check `PI_NETWORK_MODE` in your shell or shell rc file and restart with `PI_NETWORK_MODE=host pi`.
+
+- **Browser on another machine:** create a tunnel to the Docker host and keep it open:
+
+  ```bash
+  ssh -N -L 33461:127.0.0.1:33461 user@10.1.1.2
+  ```
+
+  Then open `http://127.0.0.1:33461/#<token>` locally. The port changes with every `/web`, so adjust the tunnel.
+
+- **Docker Desktop, Colima, rootless Docker, or a remote Docker host:** host networking refers to the VM, rootless network namespace, or remote host, not to your local loopback. Use an SSH tunnel into that environment or a port-forwarding setup.
+
+- The `Warning: pi-webapp: ...` line only means Pi could not open a browser inside the container. Verify the service from inside the container with:
+
+  ```bash
+  docker exec <container> sh -c 'curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:33461/'
+  ```
+
+  Any HTTP response means the server is listening; the remaining problem is reachability.
+
 The wrapper uses Docker host networking by default (`--network host`) because pi-webapp binds `127.0.0.1` inside the container. That makes the URL reachable from your browser on the same Linux host, while the Web UI itself still listens only on loopback. Trade-off: the container shares the host network namespace. Use
 
 ```bash
