@@ -1,12 +1,14 @@
 # Example Pi configuration
 
-This directory mirrors the user-level Pi agent directory (`~/.pi/agent`).
-The wrapper seeds these files automatically when a file is missing; existing
-files are never overwritten. You can also copy them by hand:
+This directory mirrors the user-level Pi agent directory (`~/.pi/agent`) and
+the wrapper-level mount config. The wrapper seeds these files automatically
+when a file is missing; existing files are never overwritten. You can also copy
+them by hand:
 
 ```bash
 mkdir -p ~/.pi/agent
 cp -r examples/pi/agent/. ~/.pi/agent/
+cp examples/pi/mounts.conf ~/.pi/mounts.conf
 ```
 
 ## Contents
@@ -17,7 +19,9 @@ cp -r examples/pi/agent/. ~/.pi/agent/
 | `agent/mcp.json` | Empty user-level MCP server list (built-in MCP support) |
 | `agent/mcp.example.json` | Copy-ready MCP server examples |
 | `agent/web-search.json` | `pi-web-access` configured for the local SearXNG |
+| `agent/APPEND_SYSTEM.md` | Persistent system-prompt addendum |
 | `agent/skills/llm-wiki/SKILL.md` | Global, on-demand LLM-wiki skill |
+| `mounts.conf` | Optional permanent extra mounts (`host:container[:ro]`) |
 | `rpiv-web-tools/config.json` | Optional SearXNG config for `@juicesharp/rpiv-web-tools` |
 
 ## Defaults
@@ -32,6 +36,21 @@ cp -r examples/pi/agent/. ~/.pi/agent/
 The wrapper additionally enforces `PI_TELEMETRY=0` and
 `PI_WEB_SENTRY_ENABLED=false`. Update checks stay enabled so Pi can show new
 versions. `/share` and `/bug` remain available as manual actions.
+
+## Extra mounts and system prompt
+
+`mounts.conf` is optional; the commented examples show the syntax. Active
+lines are mounted into every container on the next start:
+
+```text
+~/shared:/shared:ro
+/srv/data:/data
+```
+
+`APPEND_SYSTEM.md` is appended to Pi's system prompt for every session. For a
+complete replacement use `~/.pi/agent/SYSTEM.md`; for project-specific
+instructions use a project-root `AGENTS.md` (project `.pi` files are hidden by
+the wrapper).
 
 ## MCP
 

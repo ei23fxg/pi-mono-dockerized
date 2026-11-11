@@ -29,6 +29,7 @@ PI_CONTAINER_NAME="${PI_CONTAINER_NAME_PREFIX}${CURRENT_DIR_HASH}"
 PI_IMAGE_NAME="pi:latest"
 PI_FOLDER="$HOME/.pi"
 PI_AGENT_DIR="${PI_FOLDER}/agent"
+PI_MOUNTS_FILE="${PI_MOUNTS_FILE:-${PI_FOLDER}/mounts.conf}"
 PI_SESSION_MOUNT_NAME="--${PI_SAFE_WORK_DIR}--"
 PI_SESSION_DIR="${PI_AGENT_DIR}/sessions/${PI_SESSION_MOUNT_NAME}"
 PI_GLOBAL_VOLUME="pi-software-binaries"
@@ -181,6 +182,13 @@ seed_pi_config() {
             mkdir -p "${PI_AGENT_DIR}/skills/llm-wiki"
             cp "${example_dir}/skills/llm-wiki/SKILL.md" "${PI_AGENT_DIR}/skills/llm-wiki/SKILL.md"
         fi
+        if [[ ! -f "${PI_AGENT_DIR}/APPEND_SYSTEM.md" && -f "${example_dir}/APPEND_SYSTEM.md" ]]; then
+            cp "${example_dir}/APPEND_SYSTEM.md" "${PI_AGENT_DIR}/APPEND_SYSTEM.md"
+        fi
+        if [[ ! -f "${PI_MOUNTS_FILE}" && -f "${PI_SCRIPT_DIR}/examples/pi/mounts.conf" ]]; then
+            mkdir -p "$(dirname "${PI_MOUNTS_FILE}")"
+            cp "${PI_SCRIPT_DIR}/examples/pi/mounts.conf" "${PI_MOUNTS_FILE}"
+        fi
     else
         echo "Warning: ${example_dir} not found; Pi config was not seeded." >&2
     fi
@@ -240,6 +248,64 @@ install_default_packages() {
         "${PI_TELEMETRY_ENV[@]}" \
         "${PI_IMAGE_NAME}" \
         /bin/sh -c "set -e; for spec in ${PI_DEFAULT_PACKAGES[*]}; do pi install \"\$spec\"; done; touch '${container_stamp}'"
+}
+
+# ---------------------------------------------------------------------------
+# Helper: zusätzliche permanente Mounts aus ~/.pi/mounts.conf
+# ---------------------------------------------------------------------------
+add_extra_mounts() {
+    [[ -f "${PI_MOUNTS_FILE}" ]] || return
+
+    local line host_path container_spec container_path mode
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+        # Leerzeichen am Rand entfernen; Kommentare und Leerzeilen ignorieren.
+        line="${line%$'\r'}"
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [[ -z "${line}" || "${line}" == \#* ]] && continue
+
+        # Nur ein führendes ~ wird expandiert.
+        line="${line/#\~/$HOME}"
+
+        if [[ "${line}" != *:* ]]; then
+            echo "Warning: ignoring mount without container path: ${line}" >&2
+            continue
+        fi
+
+        host_path="${line%%:*}"
+        container_spec="${line#*:}"
+        container_path="${container_spec%%:*}"
+        mode=""
+        if [[ "${container_spec}" == *:* ]]; then
+            mode="${container_spec#*:}"
+        fi
+
+        if [[ "${host_path}" != /* ]]; then
+            echo "Warning: ignoring mount with relative host path: ${line}" >&2
+            continue
+        fi
+        if [[ "${container_path}" != /* ]]; then
+            echo "Warning: ignoring mount with relative container path: ${line}" >&2
+            continue
+        fi
+        if [[ ! -e "${host_path}" ]]; then
+            echo "Warning: ignoring mount with missing host path: ${host_path}" >&2
+            continue
+        fi
+        if [[ -n "${mode}" && "${mode}" != "ro" && "${mode}" != "rw" ]]; then
+            echo "Warning: ignoring mount with unsupported mode '${mode}': ${line}" >&2
+            continue
+        fi
+
+        case "${container_path}" in
+            "/"|"/home/hostuser"|"/home/hostuser/.pi"|"/home/hostuser/.pi"/*|"/opt"|"/opt/pi-packages"|"/opt/pi-packages"/*|"${PI_WORK_DIR}"|"${PI_WORK_DIR}"/*)
+                echo "Warning: ignoring mount over reserved container path: ${container_path}" >&2
+                continue
+                ;;
+        esac
+
+        DOCKER_ARGS+=(-v "${line}")
+    done < "${PI_MOUNTS_FILE}"
 }
 
 # ---------------------------------------------------------------------------
@@ -346,6 +412,9 @@ run_pi() {
             key_file="${PI_DOCKER_CONFIG_ROOT}/$key"
             [[ -f "$key_file" ]] && DOCKER_ARGS+=(-e "$key=$(cat "$key_file")")
         done
+
+        # Zusätzliche permanente Mounts aus ~/.pi/mounts.conf
+        add_extra_mounts
     fi
 
     # Startbefehl: Argumente werden als echte Argumente übergeben, nicht in

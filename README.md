@@ -40,7 +40,9 @@ Pi 1.x uses the agent directory `~/.pi/agent` (not the old `~/.pi` root). The wr
 ~/.pi/agent/settings.json       # privacy, compaction, default packages
 ~/.pi/agent/mcp.json            # MCP servers
 ~/.pi/agent/web-search.json     # SearXNG for pi-web-access
+~/.pi/agent/APPEND_SYSTEM.md    # persistent system-prompt addendum
 ~/.pi/agent/skills/llm-wiki/    # global on-demand wiki skill
+~/.pi/mounts.conf               # optional permanent extra mounts
 ```
 
 Existing files are never overwritten. A copy-ready reference lives in [`examples/pi/`](examples/pi/); copy it manually if you prefer:
@@ -48,11 +50,44 @@ Existing files are never overwritten. A copy-ready reference lives in [`examples
 ```bash
 mkdir -p ~/.pi/agent
 cp -r examples/pi/agent/. ~/.pi/agent/
+cp examples/pi/mounts.conf ~/.pi/mounts.conf
 ```
 
 > Upgrading from an older wrapper: the legacy `@mariozechner/pi-coding-agent` package in the persistent volume is replaced by `@earendil-works/pi-coding-agent`; an old `~/.pi/settings.json` is migrated to `~/.pi/agent/settings.json`; existing per-project sessions are preserved. A `/share` patch from the previous wrapper version is reverted automatically by reinstalling the Pi package once.
 
 See the official documentation for providers and models: [pi.dev/docs/latest/models](https://pi.dev/docs/latest/models)
+
+### Extra mounts
+
+The current project directory is always mounted recursively at `/<project>_<hash>`. Add further permanent mounts in `~/.pi/mounts.conf`:
+
+```text
+# <host-path>:<container-path>[:ro|:rw]
+~/shared:/shared:ro
+/srv/data:/data
+```
+
+- `~` is expanded to your home directory.
+- `:ro` mounts read-only; without a mode Docker uses read-write.
+- Missing host paths, relative paths, and reserved targets (`/`, `~/.pi`, `/opt/pi-packages`, the current project path) are skipped with a warning.
+- Only full-line comments are supported.
+- The wrapper seeds the file with commented examples on first use. Changes apply on the next container start; no image rebuild is needed.
+- Override the location with `PI_MOUNTS_FILE=/path/to/mounts.conf`.
+- Only add paths that Pi is allowed to read or modify; a read-write mount gives the agent host-level write access to that directory.
+
+### Global system prompt
+
+Pi has three user-level places for persistent instructions:
+
+| Path | Effect |
+|---|---|
+| `~/.pi/agent/APPEND_SYSTEM.md` | **Adds** instructions to Pi's system prompt (recommended) |
+| `~/.pi/agent/SYSTEM.md` | **Replaces** Pi's built-in system prompt (use with care) |
+| `~/.pi/agent/AGENTS.md` | Adds user context/instructions across projects |
+
+The wrapper seeds `APPEND_SYSTEM.md` as a template if it does not exist. Edit it and start a new session, or run `/reload` in an active session.
+
+Project-root `AGENTS.md` files still load as context. Project `.pi/APPEND_SYSTEM.md` and `.pi/SYSTEM.md` do **not** load in this wrapper because `.pi` is hidden and `--no-approve` is used; put project-specific instructions in the project-root `AGENTS.md` instead.
 
 ### Alias
 
@@ -257,6 +292,7 @@ The wrapper always uses Docker host networking (`--network host`) because pi-web
 | `PI_ALLOW_GIT` | `1` | Set to `0` to hide `.git`, `.gitignore`, and `.gitmodules`; default exposes them for local commits and Web UI Git review |
 | `PI_GIT_NAME` | host `user.name` | Git author/committer name inside the container |
 | `PI_GIT_EMAIL` | host `user.email` | Git author/committer email inside the container |
+| `PI_MOUNTS_FILE` | `~/.pi/mounts.conf` | Optional config for permanent extra mounts |
 
 Install telemetry/analytics and Sentry are disabled by the wrapper; update checks remain on. `/share` and `/bug` are manual, so use them deliberately.
 
@@ -286,8 +322,10 @@ The wrapper hides the remaining paths by bind-mounting `/dev/null` (files) or an
 
 ```
 ~/.pi/
+├── mounts.conf             # permanent extra mounts (optional)
 ├── agent/
 │   ├── settings.json       # privacy, compaction, packages
+│   ├── APPEND_SYSTEM.md    # persistent system-prompt addendum
 │   ├── mcp.json            # MCP servers (built-in MCP)
 │   ├── web-search.json     # SearXNG for pi-web-access
 │   ├── auth.json           # provider credentials (created by /login)
