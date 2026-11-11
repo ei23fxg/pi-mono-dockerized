@@ -53,6 +53,11 @@ PI_NETWORK_MODE="host"
 # Mit PI_ALLOW_GIT=0 werden .git, .gitignore und .gitmodules verborgen.
 PI_ALLOW_GIT="${PI_ALLOW_GIT:-1}"
 
+# Mit PI_SHOW_HIDDEN=1 (oder "pi --show-hidden") werden alle standardmäßig
+# versteckten Projektdateien sichtbar. Es wird nichts außerhalb des Projekts
+# und der mounts.conf-Einträge eingebunden.
+PI_SHOW_HIDDEN="${PI_SHOW_HIDDEN:-0}"
+
 # Git-Identität: aus der Host-Konfiguration übernehmen, per Umgebung
 # überschreibbar. Ohne Namen/E-Mail kann git keinen Commit erzeugen.
 PI_GIT_NAME="${PI_GIT_NAME:-$(git config --global user.name 2>/dev/null || true)}"
@@ -79,9 +84,12 @@ PI_EMPTY_DIR=$(mktemp -d)
 # normal <sessions>/<encoded-cwd> layout (Web UI session discovery relies on it).
 PI_SESSION_PARENT=$(mktemp -d)
 mkdir -p "${PI_SESSION_PARENT}/${PI_SESSION_MOUNT_NAME}"
+# Enthält nur .pi/APPEND_SYSTEM.md und .pi/SYSTEM.md, damit diese sichtbar
+# bleiben, während der Rest des Projekt-.pi-Verzeichnisses verborgen ist.
+PI_PROJECT_PI_DIR=$(mktemp -d)
 
 cleanup() {
-    rm -rf "$PI_EMPTY_DIR" "$PI_SESSION_PARENT" 2>/dev/null || true
+    rm -rf "$PI_EMPTY_DIR" "$PI_SESSION_PARENT" "$PI_PROJECT_PI_DIR" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -182,8 +190,27 @@ seed_pi_config() {
             mkdir -p "${PI_AGENT_DIR}/skills/llm-wiki"
             cp "${example_dir}/skills/llm-wiki/SKILL.md" "${PI_AGENT_DIR}/skills/llm-wiki/SKILL.md"
         fi
-        if [[ ! -f "${PI_AGENT_DIR}/APPEND_SYSTEM.md" && -f "${example_dir}/APPEND_SYSTEM.md" ]]; then
-            cp "${example_dir}/APPEND_SYSTEM.md" "${PI_AGENT_DIR}/APPEND_SYSTEM.md"
+        if [[ -f "${example_dir}/APPEND_SYSTEM.md" ]]; then
+            if [[ ! -f "${PI_AGENT_DIR}/APPEND_SYSTEM.md" ]]; then
+                cp "${example_dir}/APPEND_SYSTEM.md" "${PI_AGENT_DIR}/APPEND_SYSTEM.md"
+            else
+                # Migrate only the untouched template from the previous release.
+                local legacy_append
+                legacy_append="$(cat <<'EOF'
+# Global instructions
+
+<!--
+Add persistent instructions for every Pi session here. Pi appends this file to
+the system prompt (it does not replace Pi's built-in system prompt).
+Keep it short, concrete, and free of secrets.
+-->
+EOF
+)"
+                if [[ "$(cat "${PI_AGENT_DIR}/APPEND_SYSTEM.md")" == "${legacy_append}" ]]; then
+                    cp "${example_dir}/APPEND_SYSTEM.md" "${PI_AGENT_DIR}/APPEND_SYSTEM.md"
+                    echo "Updated ~/.pi/agent/APPEND_SYSTEM.md with the container environment template."
+                fi
+            fi
         fi
         if [[ ! -f "${PI_MOUNTS_FILE}" && -f "${PI_SCRIPT_DIR}/examples/pi/mounts.conf" ]]; then
             mkdir -p "$(dirname "${PI_MOUNTS_FILE}")"
@@ -391,21 +418,37 @@ run_pi() {
         
         docker rm -f "${PI_CONTAINER_NAME}" 2>/dev/null || true
 
-        # Ignores via /dev/null mounts
-        local -a ignored_files=()
-        for file in "${PI_DEFAULT_IGNORED_FILES[@]}"; do
-            if [[ "$PI_ALLOW_GIT" == "1" && ( "$file" == ".git" || "$file" == ".gitignore" || "$file" == ".gitmodules" ) ]]; then
-                continue
+        # Ignores via /dev/null mounts. Mit PI_SHOW_HIDDEN=1 bleibt alles
+        # sichtbar; es werden weiterhin nur Projektpfade und mounts.conf-Ziele
+        # eingebunden.
+        if [[ "$PI_SHOW_HIDDEN" != "1" ]]; then
+            local -a ignored_files=()
+            for file in "${PI_DEFAULT_IGNORED_FILES[@]}"; do
+                if [[ "$PI_ALLOW_GIT" == "1" && ( "$file" == ".git" || "$file" == ".gitignore" || "$file" == ".gitmodules" ) ]]; then
+                    continue
+                fi
+                ignored_files+=("$file")
+            done
+
+            # .pi/APPEND_SYSTEM.md und .pi/SYSTEM.md bleiben sichtbar.
+            if [[ -d "./.pi" ]]; then
+                for file in APPEND_SYSTEM.md SYSTEM.md; do
+                    [[ -f "./.pi/$file" ]] && cp "./.pi/$file" "${PI_PROJECT_PI_DIR}/$file"
+                done
             fi
-            ignored_files+=("$file")
-        done
-        for file in "${ignored_files[@]}"; do
-            if [[ -d "./$file" ]]; then
-                DOCKER_ARGS+=(-v "${PI_EMPTY_DIR}:${PI_WORK_DIR}/$file")
-            elif [[ -f "./$file" ]]; then
-                DOCKER_ARGS+=(-v "/dev/null:${PI_WORK_DIR}/$file")
-            fi
-        done
+
+            for file in "${ignored_files[@]}"; do
+                if [[ -d "./$file" ]]; then
+                    if [[ "$file" == ".pi" ]]; then
+                        DOCKER_ARGS+=(-v "${PI_PROJECT_PI_DIR}:${PI_WORK_DIR}/.pi")
+                    else
+                        DOCKER_ARGS+=(-v "${PI_EMPTY_DIR}:${PI_WORK_DIR}/$file")
+                    fi
+                elif [[ -f "./$file" ]]; then
+                    DOCKER_ARGS+=(-v "/dev/null:${PI_WORK_DIR}/$file")
+                fi
+            done
+        fi
 
         # API Keys durchreichen
         for key in "${PI_API_KEY_FILES[@]}"; do
@@ -441,11 +484,23 @@ run_pi() {
 
 # --- Routing ---
 PI_COMMAND="${1:-}"
-if [[ "${PI_COMMAND}" == "rebuild" ]]; then
-    docker rmi "${PI_IMAGE_NAME}" 2>/dev/null || true
-    shift
-    PI_COMMAND="${1:-}"
-fi
+while [[ -n "${PI_COMMAND}" ]]; do
+    case "${PI_COMMAND}" in
+        --show-hidden|show-hidden)
+            PI_SHOW_HIDDEN=1
+            shift
+            PI_COMMAND="${1:-}"
+            ;;
+        rebuild)
+            docker rmi "${PI_IMAGE_NAME}" 2>/dev/null || true
+            shift
+            PI_COMMAND="${1:-}"
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
 
 # Shortcut: Pi starten und direkt den /web-Extension-Command ausführen.
 if [[ "${PI_COMMAND}" == "web" ]]; then

@@ -85,9 +85,9 @@ Pi has three user-level places for persistent instructions:
 | `~/.pi/agent/SYSTEM.md` | **Replaces** Pi's built-in system prompt (use with care) |
 | `~/.pi/agent/AGENTS.md` | Adds user context/instructions across projects |
 
-The wrapper seeds `APPEND_SYSTEM.md` as a template if it does not exist. Edit it and start a new session, or run `/reload` in an active session.
+The wrapper seeds `APPEND_SYSTEM.md` with a container/environment description if it does not exist. Edit it and start a new session, or run `/reload` in an active session. Existing custom content is preserved.
 
-Project-root `AGENTS.md` files still load as context. Project `.pi/APPEND_SYSTEM.md` and `.pi/SYSTEM.md` do **not** load in this wrapper because `.pi` is hidden and `--no-approve` is used; put project-specific instructions in the project-root `AGENTS.md` instead.
+Project-root `AGENTS.md` files still load as context. Project `.pi/APPEND_SYSTEM.md` and `.pi/SYSTEM.md` are **visible by default** (the rest of `.pi` is hidden), but they are **not applied automatically** because project trust is off (`--no-approve`). Put automatically applied project-specific instructions in the project-root `AGENTS.md` instead.
 
 ### Alias
 
@@ -117,6 +117,9 @@ pi @file1.md @file2.md "prompt"    # context + prompt
 
 # Web UI
 pi web                             # start Pi and run /web automatically
+
+# One-off exposure of default-hidden project files
+pi --show-hidden                    # .env, .pi, etc. visible for this run
 
 # In-session commands
 /web                               # open the pi-webapp browser workspace
@@ -290,6 +293,7 @@ The wrapper always uses Docker host networking (`--network host`) because pi-web
 | `PI_CODING_AGENT_VERSION` | `1.5.2` | Pi package version installed in the persistent volume |
 | `PI_RUST_VERSION` | `stable` | Rust toolchain version baked into the image |
 | `PI_ALLOW_GIT` | `1` | Set to `0` to hide `.git`, `.gitignore`, and `.gitmodules`; default exposes them for local commits and Web UI Git review |
+| `PI_SHOW_HIDDEN` | `0` | Set to `1` (or use `pi --show-hidden`) to expose all default-hidden project files for one run |
 | `PI_GIT_NAME` | host `user.name` | Git author/committer name inside the container |
 | `PI_GIT_EMAIL` | host `user.email` | Git author/committer email inside the container |
 | `PI_MOUNTS_FILE` | `~/.pi/mounts.conf` | Optional config for permanent extra mounts |
@@ -310,13 +314,35 @@ The path is built from the **directory name** + the **last 6 characters** of the
 
 ## File Ignoring
 
-Sensitive files are hidden from the container by bind-mounting `/dev/null` over them.
+The project directory is mounted recursively, but these **project-relative** paths are hidden by default:
 
-**Ignored by default:** `.env`, `.secret`, `.deploy`, `.build`, `.vscode`, `.pi`, `.DS_Store`, plus the ignore files `.aiignore`, `.aiexclude`, `.copilotignore`, `.geminiignore`, `.codeiumignore`, and `.cursorignore`.
+| Path | Default |
+|---|---|
+| `.env`, `.secret`, `.deploy`, `.build`, `.vscode`, `.DS_Store` | hidden |
+| `.aiignore`, `.aiexclude`, `.copilotignore`, `.geminiignore`, `.codeiumignore`, `.cursorignore` | hidden |
+| `.pi/` | hidden, **except** `.pi/APPEND_SYSTEM.md` and `.pi/SYSTEM.md`, which stay visible if present |
+| `.git`, `.gitignore`, `.gitmodules` | visible (set `PI_ALLOW_GIT=0` to hide) |
 
-`.git`, `.gitignore`, and `.gitmodules` are **visible by default** so Pi can work with Git. Set `PI_ALLOW_GIT=0` to hide them; Git history and remotes can contain credentials.
+Only the project and the paths from `~/.pi/mounts.conf` are mounted; these rules never expose other host directories.
 
-The wrapper hides the remaining paths by bind-mounting `/dev/null` (files) or an empty directory (directories). It does not evaluate `.gitignore`-style patterns; add further exclusions to `PI_DEFAULT_IGNORED_FILES` in the `pi` script, or keep secrets outside the project directory.
+To expose all default-hidden project files for one run:
+
+```bash
+pi --show-hidden
+# or
+PI_SHOW_HIDDEN=1 pi
+```
+
+This removes only the project-relative ignore mounts. It does **not** mount the host and does not change extra mounts. `--show-hidden` can be combined with other wrapper commands, for example:
+
+```bash
+pi --show-hidden web
+pi --show-hidden rebuild
+```
+
+It overrides `PI_ALLOW_GIT=0` for that run. Hidden paths can contain credentials; use it deliberately.
+
+The wrapper hides paths by bind-mounting `/dev/null` (files) or an empty directory (directories). It does not evaluate `.gitignore`-style patterns; add further exclusions to `PI_DEFAULT_IGNORED_FILES` in the `pi` script, or keep secrets outside the project directory.
 
 ## Directory Structure
 
