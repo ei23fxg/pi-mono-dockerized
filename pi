@@ -69,7 +69,7 @@ PI_TELEMETRY_ENV=(
 # Rust-Version für das Image (per Umgebung überschreibbar, z. B. PI_RUST_VERSION=1.83)
 PI_RUST_VERSION="${PI_RUST_VERSION:-stable}"
 # Ändert sich der Stamp (Dockerfile/Rust-Version), wird das Image automatisch neu gebaut
-PI_BUILD_STAMP="4-${PI_RUST_VERSION}"
+PI_BUILD_STAMP="5-${PI_RUST_VERSION}"
 
 PI_DEFAULT_IGNORED_FILES=(.env .deploy .secret .git .build .vscode .gitmodules .pi .aiignore .aiexclude .copilotignore .gitignore .geminiignore .codeiumignore .cursorignore .DS_Store)
 PI_EMPTY_DIR=$(mktemp -d)
@@ -114,7 +114,8 @@ RUN npm install -g pnpm@latest
 # Rust systemweit über rustup
 ARG RUST_VERSION=${PI_RUST_VERSION}
 ENV RUSTUP_HOME=/usr/local/rustup \\
-    CARGO_HOME=/usr/local/cargo
+    CARGO_HOME=/usr/local/cargo \\
+    PATH="/usr/local/cargo/bin:\${PATH}"
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \\
       | sh -s -- -y --no-modify-path --profile minimal --default-toolchain "\${RUST_VERSION}" \\
