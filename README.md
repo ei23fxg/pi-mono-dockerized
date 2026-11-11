@@ -217,7 +217,7 @@ The `/web` service runs **inside the same container as Pi**, binds `127.0.0.1` o
   docker inspect $(docker ps -q --filter name=pi-) --format '{{.HostConfig.NetworkMode}}'
   ```
 
-  It must print `host`. If it prints `bridge`, check `PI_NETWORK_MODE` in your shell or shell rc file and restart with `PI_NETWORK_MODE=host pi`.
+  It must print `host`. If it prints `bridge`, you are still running an older copy of the `pi` script or an old alias; the current wrapper always uses host networking.
 
 - **Browser on another machine:** create a tunnel to the Docker host and keep it open:
 
@@ -237,13 +237,7 @@ The `/web` service runs **inside the same container as Pi**, binds `127.0.0.1` o
 
   Any HTTP response means the server is listening; the remaining problem is reachability.
 
-The wrapper uses Docker host networking by default (`--network host`) because pi-webapp binds `127.0.0.1` inside the container. That makes the URL reachable from your browser on the same Linux host, while the Web UI itself still listens only on loopback. Trade-off: the container shares the host network namespace. Use
-
-```bash
-PI_NETWORK_MODE=bridge pi
-```
-
-for strict Docker bridge networking; `/web` then needs an SSH tunnel or similar to reach the container. The Web UI is intentionally scoped to the current project: other projects' sessions are not mounted, so its workspace/session picker cannot see them. The Web UI is not designed to be exposed to the public internet; its terminals and tools run with the same container user permissions as Pi itself.
+The wrapper always uses Docker host networking (`--network host`) because pi-webapp binds `127.0.0.1` inside the container. That makes the printed URL reachable from a browser on the same Linux host, while the Web UI itself still listens only on loopback. The container therefore shares the host network namespace; there is no bridge mode in this wrapper. The Web UI is intentionally scoped to the current project: other projects' sessions are not mounted, so its workspace/session picker cannot see them. The Web UI is not designed to be exposed to the public internet; its terminals and tools run with the same container user permissions as Pi itself.
 
 ## Configuration reference
 
@@ -251,7 +245,6 @@ for strict Docker bridge networking; `/web` then needs an SSH tunnel or similar 
 |---|---|---|
 | `PI_CODING_AGENT_VERSION` | `1.5.2` | Pi package version installed in the persistent volume |
 | `PI_RUST_VERSION` | `stable` | Rust toolchain version baked into the image |
-| `PI_NETWORK_MODE` | `host` | Docker network mode; use `bridge` for stricter isolation |
 | `PI_ALLOW_GIT` | `1` | Set to `0` to hide `.git`, `.gitignore`, and `.gitmodules`; default exposes them for local commits and Web UI Git review |
 | `PI_GIT_NAME` | host `user.name` | Git author/committer name inside the container |
 | `PI_GIT_EMAIL` | host `user.email` | Git author/committer email inside the container |
@@ -268,7 +261,7 @@ Each working directory gets its own container (`pi-<md5-hash>`). Your project is
 
 The path is built from the **directory name** + the **last 6 characters** of the directory's MD5 hash. This keeps it readable while avoiding collisions between identically named directories.
 
-`~/.pi/agent` is shared across containers for settings, credentials, models, and installed packages. Sessions are the exception: each project gets its own directory at `~/.pi/agent/sessions/--<container-path>--`; inside the container a temporary sessions root containing only that subdirectory is mounted over `~/.pi/agent/sessions`. Other projects' sessions are therefore not visible. Containers are ephemeral (`--rm`) and cleaned up on exit; the Web UI uses host networking by default (see [Privacy & defaults](#privacy--defaults) and [Web UI](#web-ui)).
+`~/.pi/agent` is shared across containers for settings, credentials, models, and installed packages. Sessions are the exception: each project gets its own directory at `~/.pi/agent/sessions/--<container-path>--`; inside the container a temporary sessions root containing only that subdirectory is mounted over `~/.pi/agent/sessions`. Other projects' sessions are therefore not visible. Containers are ephemeral (`--rm`) and cleaned up on exit; the Web UI always uses host networking (see [Web UI](#web-ui)).
 
 ## File Ignoring
 

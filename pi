@@ -44,9 +44,9 @@ PI_DEFAULT_PACKAGES=(
 )
 PI_PACKAGES_STAMP="2026-11-11"
 
-# Host-Netzwerk ist nötig, damit das Web-UI (127.0.0.1 im Container) vom
-# Host-Browser erreichbar ist. Mit PI_NETWORK_MODE=bridge abschaltbar.
-PI_NETWORK_MODE="${PI_NETWORK_MODE:-host}"
+# Pi läuft immer im Docker-Host-Netzwerk, damit das Web-UI (127.0.0.1 im
+# Container) vom Host-Browser erreichbar ist. Kein bridge-Override.
+PI_NETWORK_MODE="host"
 
 # .git ist standardmäßig sichtbar, damit Pi lokal committen kann.
 # Mit PI_ALLOW_GIT=0 werden .git, .gitignore und .gitmodules verborgen.

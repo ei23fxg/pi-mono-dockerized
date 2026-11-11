@@ -93,10 +93,9 @@ skill can coexist; the skill is the lightweight, on-demand option.
 ## Web UI
 
 `pi-webapp` is installed by default. Start Pi normally and enter `/web`; the
-command prints a local URL. The wrapper uses Docker host networking by default
-so the container's `127.0.0.1` is reachable from your browser. For stricter
-network isolation use `PI_NETWORK_MODE=bridge`, but then `/web` is not
-reachable from the host. Git is enabled by default, including the pi-webapp Git
+command prints a local URL. The wrapper always uses Docker host networking
+(`--network host`) so the container's `127.0.0.1` is reachable from a browser on
+the same Linux host. Git is enabled by default, including the pi-webapp Git
 panel; set `PI_ALLOW_GIT=0` to hide `.git`, `.gitignore`, and `.gitmodules`.
 Give Git an identity via your host `git config --global user.name/user.email`
 or `PI_GIT_NAME` / `PI_GIT_EMAIL`.
