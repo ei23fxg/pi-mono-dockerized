@@ -189,50 +189,36 @@ seed_pi_config() {
 # Helper: Pi selbst (aktuelle @earendil-works-Version) im Volume installieren
 # ---------------------------------------------------------------------------
 ensure_pi() {
-    local installed_version=""
-    installed_version="$(docker run --rm \
+    local pi_state installed_version pi_patched=""
+    pi_state="$(docker run --rm \
         --user "$(id -u):$(id -g)" \
         -v "${PI_GLOBAL_VOLUME}:/opt/pi-packages" \
         "${PI_IMAGE_NAME}" \
-        /bin/sh -c 'if [ -x /opt/pi-packages/npm/bin/pi ] && [ -f /opt/pi-packages/.pi-coding-agent-version ]; then cat /opt/pi-packages/.pi-coding-agent-version; fi' \
+        /bin/sh -c 'if [ -x /opt/pi-packages/npm/bin/pi ] && [ -f /opt/pi-packages/.pi-coding-agent-version ]; then cat /opt/pi-packages/.pi-coding-agent-version; fi
+if grep -q "pi-docker-share-disabled" /opt/pi-packages/npm/lib/node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/interactive-mode.js 2>/dev/null; then echo PATCHED; fi' \
         2>/dev/null || true)"
 
-    if [[ "${installed_version}" == "${PI_CODING_AGENT_VERSION}" ]]; then
+    installed_version="$(printf '%s\n' "${pi_state}" | sed -n '1p')"
+    if printf '%s\n' "${pi_state}" | grep -q '^PATCHED$'; then
+        pi_patched="1"
+    fi
+
+    if [[ "${installed_version}" == "${PI_CODING_AGENT_VERSION}" && -z "${pi_patched}" ]]; then
         return
     fi
 
-    echo "Installing Pi ${PI_CODING_AGENT_VERSION} into persistent volume..."
+    if [[ -n "${pi_patched}" ]]; then
+        echo "Restoring /share by reinstalling Pi ${PI_CODING_AGENT_VERSION}..."
+    else
+        echo "Installing Pi ${PI_CODING_AGENT_VERSION} into persistent volume..."
+    fi
     docker run --rm \
         --user "$(id -u):$(id -g)" \
         -e "HOME=/home/hostuser" \
         -v "${PI_GLOBAL_VOLUME}:/opt/pi-packages" \
         "${PI_TELEMETRY_ENV[@]}" \
         "${PI_IMAGE_NAME}" \
-        /bin/sh -c "mkdir -p /opt/pi-packages/npm; npm uninstall -g ${PI_LEGACY_PACKAGE} >/dev/null 2>&1 || true; npm install -g --no-audit --no-fund '${PI_CODING_AGENT_SPEC}' && printf '%s' '${PI_CODING_AGENT_VERSION}' > /opt/pi-packages/.pi-coding-agent-version"
-}
-
-# ---------------------------------------------------------------------------
-# Helper: früheres /share-Patching rückgängig machen (Migration)
-# ---------------------------------------------------------------------------
-restore_pi_share() {
-    local restore_script="${PI_SCRIPT_DIR}/scripts/restore-pi-share.sh"
-    local marker="${PI_AGENT_DIR}/.share-restored-v1"
-    [[ -f "${marker}" ]] && return
-    if [[ ! -f "${restore_script}" ]]; then
-        return
-    fi
-
-    if docker run --rm \
-        --user "$(id -u):$(id -g)" \
-        -e "HOME=/home/hostuser" \
-        -v "${PI_GLOBAL_VOLUME}:/opt/pi-packages" \
-        -v "${restore_script}:/tmp/restore-pi-share.sh:ro" \
-        "${PI_IMAGE_NAME}" \
-        /bin/sh /tmp/restore-pi-share.sh; then
-        touch "${marker}"
-    else
-        echo "Warning: a previous /share patch could not be reverted; reinstall Pi if /share stays disabled." >&2
-    fi
+        /bin/sh -c "mkdir -p /opt/pi-packages/npm; npm uninstall -g ${PI_LEGACY_PACKAGE} >/dev/null 2>&1 || true; npm uninstall -g @earendil-works/pi-coding-agent >/dev/null 2>&1 || true; npm install -g --no-audit --no-fund '${PI_CODING_AGENT_SPEC}' && printf '%s' '${PI_CODING_AGENT_VERSION}' > /opt/pi-packages/.pi-coding-agent-version"
 }
 
 # ---------------------------------------------------------------------------
@@ -287,10 +273,8 @@ bootstrap_environment() {
     # Fix Permissions im Volume (einmalig)
     docker run --rm -v "${PI_GLOBAL_VOLUME}:/data" busybox chown -R "$(id -u):$(id -g)" /data
 
-    # 3. Pi installieren/aktualisieren, altes Share-Patching zurücknehmen,
-    #    Standardpakete installieren
+    # 3. Pi installieren/aktualisieren (inkl. /share-Migration), Standardpakete installieren
     ensure_pi
-    restore_pi_share
     install_default_packages
 }
 

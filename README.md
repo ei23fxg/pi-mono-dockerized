@@ -50,7 +50,7 @@ mkdir -p ~/.pi/agent
 cp -r examples/pi/agent/. ~/.pi/agent/
 ```
 
-> Upgrading from an older wrapper: the legacy `@mariozechner/pi-coding-agent` package in the persistent volume is replaced by `@earendil-works/pi-coding-agent`; an old `~/.pi/settings.json` is migrated to `~/.pi/agent/settings.json`; existing per-project sessions are preserved. A `/share` patch from the previous wrapper version is reverted automatically.
+> Upgrading from an older wrapper: the legacy `@mariozechner/pi-coding-agent` package in the persistent volume is replaced by `@earendil-works/pi-coding-agent`; an old `~/.pi/settings.json` is migrated to `~/.pi/agent/settings.json`; existing per-project sessions are preserved. A `/share` patch from the previous wrapper version is reverted automatically by reinstalling the Pi package once.
 
 See the official documentation for providers and models: [pi.dev/docs/latest/models](https://pi.dev/docs/latest/models)
 
