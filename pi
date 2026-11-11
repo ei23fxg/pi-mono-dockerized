@@ -56,11 +56,44 @@ PI_MOUNT_FILE_TARGETS=()
 PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-1.5.2}"
 PI_CODING_AGENT_SPEC="@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"
 PI_LEGACY_PACKAGE="@mariozechner/pi-coding-agent"
-PI_DEFAULT_PACKAGES=(
-    "npm:pi-web-access@0.47.0"
-    "npm:pi-webapp@0.1.55"
-)
-PI_PACKAGES_STAMP="2026-11-11"
+# Standard-Pakete. Bewusst OHNE exakte Versionspin: Pi prüft beim Start gegen
+# die Registry und meldet dann im Chat
+#     "Package Updates Available - Run pi update --extensions"
+# Gepinnte Einträge (npm:name@1.2.3) überspringt genau diese Prüfung, und
+# "pi update" verschiebt sie nie (docs/packages.md: "Versioned npm
+# specifications are pinned."). Fliegend eingetragene Pakete bleiben auch nach
+# einem Update fliegend, die Meldung erscheint also wieder.
+#
+#   pi update --extensions   nur Pakete aktualisieren
+#   pi update --all          Pi und alle Pakete aktualisieren
+#
+# Wer trotzdem reproduktiv fixieren will, pinnt (dann entfällt die Meldung):
+#   PI_PACKAGE_PINS="pi-web-access@0.47.0,pi-webapp@0.1.55" pi ...
+# Ein einzelnes Paket unterdrücken: PI_SKIP_PACKAGES="billion-context" pi ...
+PI_DEFAULT_PACKAGE_NAMES=(pi-web-access pi-webapp pi-token-speed billion-context)
+PI_PACKAGE_PINS="${PI_PACKAGE_PINS:-}"
+PI_SKIP_PACKAGES="${PI_SKIP_PACKAGES:-}"
+PI_DEFAULT_PACKAGES=()
+for _pkg_name in "${PI_DEFAULT_PACKAGE_NAMES[@]}"; do
+    _pkg_pin=""
+    _skip=0
+    _saved_ifs="$IFS"; IFS=','
+    for _pin_spec in ${PI_PACKAGE_PINS}; do
+        [[ "${_pin_spec%%@*}" == "${_pkg_name}" ]] && _pkg_pin="${_pin_spec#*@}"
+    done
+    for _skip_name in ${PI_SKIP_PACKAGES}; do
+        [[ "${_skip_name}" == "${_pkg_name}" ]] && _skip=1
+    done
+    IFS="${_saved_ifs}"
+    [[ "${_skip}" == "1" ]] && continue
+    PI_DEFAULT_PACKAGES+=("npm:${_pkg_name}${_pkg_pin:+@${_pkg_pin}}")
+done
+unset _pkg_name _pkg_pin _pin_spec _skip _skip_name _saved_ifs
+PI_PACKAGES_STAMP="2026-11-11-unpinned"
+
+# billion-context (Kontextkompression): Session-Records und Konfiguration dürfen
+# nicht im flüchtigen Container-$HOME landen.
+PI_BILI_DATA_DIR="${PI_AGENT_DIR}/billion-context"
 
 # Pi läuft immer im Docker-Host-Netzwerk, damit das Web-UI (127.0.0.1 im
 # Container) vom Host-Browser erreichbar ist. Kein bridge-Override.
@@ -259,6 +292,12 @@ EOF
 # ---------------------------------------------------------------------------
 # Helper: Pi selbst (aktuelle @earendil-works-Version) im Volume installieren
 # ---------------------------------------------------------------------------
+# $1 >= $2 (semver-artig über sort -V)
+version_at_least() {
+    [[ "$1" == "$2" ]] && return 0
+    printf '%s\n%s\n' "$2" "$1" | sort -V -C
+}
+
 ensure_pi() {
     local pi_state installed_version pi_patched=""
     pi_state="$(docker run --rm \
@@ -274,7 +313,17 @@ if grep -q "pi-docker-share-disabled" /opt/pi-packages/npm/lib/node_modules/@ear
         pi_patched="1"
     fi
 
-    if [[ "${installed_version}" == "${PI_CODING_AGENT_VERSION}" && -z "${pi_patched}" ]]; then
+    # PI_CODING_AGENT_VERSION ist die Untergrenze, kein Deckel: ein "pi update"
+    # im Volume darf beim nächsten Start nicht zurückgedreht werden.
+    if [[ -z "${pi_patched}" && -n "${installed_version}" ]] && version_at_least "${installed_version}" "${PI_CODING_AGENT_VERSION}"; then
+        if [[ "${installed_version}" != "${PI_CODING_AGENT_VERSION}" ]]; then
+            echo "Keeping Pi ${installed_version} from the volume (wrapper pin is ${PI_CODING_AGENT_VERSION})."
+            docker run --rm \
+                --user "$(id -u):$(id -g)" \
+                -v "${PI_GLOBAL_VOLUME}:/opt/pi-packages" \
+                "${PI_IMAGE_NAME}" \
+                /bin/sh -c "printf '%s' '${installed_version}' > /opt/pi-packages/.pi-coding-agent-version"
+        fi
         return
     fi
 
@@ -301,7 +350,8 @@ install_default_packages() {
     local container_stamp="/home/hostuser/.pi/agent/.dockerized-packages-${PI_PACKAGES_STAMP}"
     [[ -f "${host_stamp}" ]] && return
 
-    echo "Installing default Pi packages (pi-web-access, pi-webapp)..."
+    echo "Installing default Pi packages (${PI_DEFAULT_PACKAGES[*]})..."
+    echo "  later updates: pi update --extensions (Pi reports new versions at startup)"
     docker run --rm \
         --user "$(id -u):$(id -g)" \
         -v "${PI_FOLDER}:/home/hostuser/.pi" \
@@ -312,6 +362,10 @@ install_default_packages() {
         "${PI_NPM_ENV[@]}" \
         "${PI_IMAGE_NAME}" \
         /bin/sh -c "set -e; for spec in ${PI_DEFAULT_PACKAGES[*]}; do pi install \"\$spec\"; done; touch '${container_stamp}'"
+
+    # Alte Stamp-Marker aufräumen (nur eigene Marker).
+    find "${PI_AGENT_DIR}" -maxdepth 1 -name '.dockerized-packages-*' \
+        ! -name ".dockerized-packages-${PI_PACKAGES_STAMP}" -delete 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------------------
@@ -537,6 +591,8 @@ bootstrap_environment() {
 
     # 1. Host-Config, festes Pi-Home und Session-Ordner vorbereiten
     mkdir -p "${PI_FOLDER}" "${PI_AGENT_DIR}" "${PI_SESSION_DIR}" "${PI_HOME_SESSION_DIR}"
+    # billion-context: persistentes Datenverzeichnis im Pi-Home.
+    mkdir -p "${PI_BILI_DATA_DIR}"
     seed_pi_config
     ensure_home_mount
 
@@ -600,6 +656,9 @@ run_pi() {
         # npm-Cache im Volume statt in $HOME
         "${PI_NPM_ENV[@]}"
         # Umgebungsvariablen für das Volume
+        # billion-context: persistente Daten- und Konfigurationspfade
+        -e "BILI_SESSIONS_DIR=/home/hostuser/.pi/agent/billion-context"
+        -e "BILI_CONFIG_FILE=/home/hostuser/.pi/agent/billion-context.json"
         -e "NPM_CONFIG_PREFIX=/opt/pi-packages/npm"
         -e "PYTHONUSERBASE=/opt/pi-packages/python"
         -e "GOPATH=/opt/pi-packages/go"

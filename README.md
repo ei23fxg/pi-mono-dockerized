@@ -22,8 +22,10 @@ Default Pi setup:
 
 - **`pi-web-access`** — web search/fetch, PDF extraction, GitHub and YouTube content; configured for the local SearXNG at `http://192.168.178.2:4000`
 - **`pi-webapp`** — browser workspace for chat, files, a real terminal, and Git review (`/web`)
+- **`pi-token-speed`** — live tokens/second and time-to-first-token in the status bar (`/tps`)
+- **`billion-context`** — model-driven context compression for long sessions; runs in-process inside Pi (`/acp`, `/acp-cache`). It cancels Pi's own auto-compaction while it carries a session
 - **Built-in MCP support** — add servers with `pi mcp add` or `~/.pi/agent/mcp.json`
-- **Automatic compaction** — explicitly enabled and on by default
+- **Automatic compaction** — explicitly enabled and on by default (`billion-context` suspends it per session while it carries the context)
 - **Global `llm-wiki` skill** — build a persistent Markdown wiki from raw sources on demand
 - **Privacy defaults** — no install telemetry, no analytics, no Sentry, update checks enabled, project trust off
 - **Git by default** — `.git`, `.gitignore`, and `.gitmodules` are visible; local commits use your host Git identity
@@ -41,6 +43,8 @@ Pi 1.x uses the agent directory `~/.pi/agent` (not the old `~/.pi` root). The wr
 ~/.pi/agent/settings.json       # privacy, compaction, default packages
 ~/.pi/agent/mcp.json            # MCP servers
 ~/.pi/agent/web-search.json     # SearXNG for pi-web-access
+~/.pi/agent/billion-context/    # billion-context session records (compression state)
+~/.pi/agent/billion-context.json# billion-context config, if you create one (optional)
 ~/.pi/agent/APPEND_SYSTEM.md    # persistent system-prompt addendum
 ~/.pi/agent/skills/llm-wiki/    # global on-demand wiki skill
 ~/.pi/mounts.conf               # optional permanent extra mounts
@@ -203,7 +207,8 @@ pi install npm:pi-subagents
 pi install git:github.com/user/repo
 pi install ./local/path
 pi remove npm:pi-subagents
-pi update                          # update all
+pi update --extensions             # update all packages
+pi update --all                    # update Pi and all packages
 pi update npm:pi-subagents         # update one
 pi list                            # list installed
 pi config                          # TUI for package config
@@ -214,6 +219,64 @@ PI_RUST_VERSION=1.83 pi rebuild    # rebuild with a specific Rust version
 ```
 
 The image is rebuilt automatically when the build stamp changes (bumped whenever the embedded Dockerfile changes) or when `PI_RUST_VERSION` changes.
+
+### Keeping the default packages up to date
+
+The default packages are registered **without** an exact version (`npm:pi-web-access`, not `npm:pi-web-access@0.47.0`). Pi then checks them against the npm registry at every start and shows
+
+```
+Package Updates Available
+Package updates are available. Run pi update --extensions
+Packages:
+- pi-webapp
+```
+
+Update them yourself when you want — nothing is upgraded automatically:
+
+```
+pi update --extensions     # packages only (settings entries stay floating)
+pi update --all            # Pi and all packages
+```
+
+Bare `pi update` updates **Pi only**. A Pi upgrade in the persistent volume is kept on the next start; the wrapper's `PI_CODING_AGENT_VERSION` is a floor, not a ceiling, so it no longer downgrades an updated Pi (it prints `Keeping Pi <new> from the volume`).
+
+Exact pins are deliberately avoided: Pi skips pinned entries (`npm:name@1.2.3`) in its update check and `pi update` never moves them, so a pinned setup never gets the notice above. For a reproducible install, pin explicitly:
+
+```
+PI_PACKAGE_PINS="pi-web-access@0.47.0,pi-webapp@0.1.55" pi
+```
+
+Skip a default package entirely (for example the invasive compressor):
+
+```
+PI_SKIP_PACKAGES="billion-context" pi                # not installed on a fresh setup
+pi remove npm:billion-context                        # removed from an existing setup
+```
+
+Existing setups that still carry pinned entries are migrated once: bumping
+`PI_PACKAGES_STAMP` re-runs `pi install npm:<name>`, which replaces
+`npm:<name>@x.y.z` with the floating entry (Pi identifies packages by name).
+The installed copy is not upgraded by that step — the next startup notice and
+`pi update --extensions` do that.
+
+### Context compression (`billion-context`)
+
+`billion-context` is a Pi extension (its `package.json` declares `pi.extensions`), so it runs **in-process** — no separate proxy, no fixed port. It adds four context tools the model calls itself (`compress`, `decompress`, `search_context`, `acp_status`) plus the `acp_delegate*` sub-agent surface, and it **cancels Pi's own auto-compaction** while it carries a session.
+
+The wrapper points its state into the persistent Pi home, because container `$HOME` is ephemeral:
+
+```
+BILI_SESSIONS_DIR=/home/hostuser/.pi/agent/billion-context
+BILI_CONFIG_FILE=/home/hostuser/.pi/agent/billion-context.json
+```
+
+Useful in-session commands: `/acp` (context state) and `/acp-cache` (prefix-cache hit rate and attribution). Optional config lives in `~/.pi/agent/billion-context.json`, e.g. turning the sub-agent surface off while keeping compression:
+
+```json
+{ "pi": { "subagents": false } }
+```
+
+Compression is not free: folded summaries cost model calls, and a healthy session should still show a 95–97% prefix-cache hit rate. If compression is not what you want, remove the package (`pi remove npm:billion-context`) — leaving `compaction.enabled: true` in `settings.json` is then correct again.
 
 All arguments are forwarded directly to `pi` inside the container. Only `rebuild` is intercepted by this script.
 
@@ -349,7 +412,9 @@ The wrapper always uses Docker host networking (`--network host`) because pi-web
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PI_CODING_AGENT_VERSION` | `1.5.2` | Pi package version installed in the persistent volume |
+| `PI_CODING_AGENT_VERSION` | `1.5.2` | Minimum Pi version in the persistent volume; a newer Pi from `pi update` is kept, not downgraded |
+| `PI_PACKAGE_PINS` | empty | Comma-separated exact pins for default packages, e.g. `pi-web-access@0.47.0` — pinned entries are skipped by Pi's update check |
+| `PI_SKIP_PACKAGES` | empty | Comma-separated default package names to not install, e.g. `billion-context` |
 | `PI_RUST_VERSION` | `stable` | Rust toolchain version baked into the image |
 | `PI_ALLOW_GIT` | `1` | Set to `0` to hide `.git`, `.gitignore`, and `.gitmodules`; default exposes them for local commits and Web UI Git review |
 | `PI_SHOW_HIDDEN` | `0` | Set to `1` (or use `pi --show-hidden -m`) to expose all default-hidden project files for one full-project run (no file arguments) |
