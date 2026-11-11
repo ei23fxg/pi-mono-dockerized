@@ -378,6 +378,13 @@ if [[ "${PI_COMMAND}" == "rebuild" ]]; then
     PI_COMMAND="${1:-}"
 fi
 
+# Shortcut: Pi starten und direkt den /web-Extension-Command ausführen.
+if [[ "${PI_COMMAND}" == "web" ]]; then
+    shift
+    run_pi "project" "/web" "$@"
+    exit $?
+fi
+
 PI_CONFIG_COMMANDS="install remove uninstall update list config auth mcp"
 for cmd in $PI_CONFIG_COMMANDS; do
     if [[ "${PI_COMMAND}" == "$cmd" ]]; then

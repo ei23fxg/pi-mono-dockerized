@@ -80,6 +80,9 @@ pi -r                              # resume (pick session)
 pi @AGENTS.md                      # load context files
 pi @file1.md @file2.md "prompt"    # context + prompt
 
+# Web UI
+pi web                             # start Pi and run /web automatically
+
 # In-session commands
 /web                               # open the pi-webapp browser workspace
 /skill:llm-wiki create a wiki ...  # load the global LLM-wiki skill on demand
@@ -203,7 +206,13 @@ To make Pi commit consistently, add the conventions to `AGENTS.md` (for example:
 
 ## Web UI
 
-`pi-webapp` is installed by default. Start Pi and enter `/web`; the command prints a local URL for the browser workspace (chat, files, terminal, Git review). Git review works by default; set `PI_ALLOW_GIT=0` if you want to hide repository metadata instead.
+`pi-webapp` is installed by default. The shortcut
+
+```bash
+pi web
+```
+
+starts Pi in the current project and executes `/web` as the initial prompt, so the web workspace starts immediately. Alternatively run `pi` and enter `/web` yourself. Either way the command prints a local URL for the browser workspace (chat, files, terminal, Git review); the Pi TUI stays open as long as the web service should run. Git review works by default; set `PI_ALLOW_GIT=0` if you want to hide repository metadata instead.
 
 The `/web` service runs **inside the same container as Pi**, binds `127.0.0.1` on a random port, and stops when Pi exits. It is not a separate container or a fixed published port. With host networking the printed URL works on the Docker host's loopback; from another machine use an SSH tunnel.
 
