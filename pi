@@ -89,6 +89,13 @@ PI_TELEMETRY_ENV=(
     -e "NPM_CONFIG_UPDATE_NOTIFIER=false"
 )
 
+# npm-Cache außerhalb von $HOME halten; sonst legt die Update-Prüfung
+# ~/.npm im gemounteten Pi-Home an. Das Volume ist bereits persistent.
+PI_NPM_ENV=(
+    -e "npm_config_cache=/opt/pi-packages/npm-cache"
+    -e "NPM_CONFIG_CACHE=/opt/pi-packages/npm-cache"
+)
+
 # Rust-Version für das Image (per Umgebung überschreibbar, z. B. PI_RUST_VERSION=1.83)
 PI_RUST_VERSION="${PI_RUST_VERSION:-stable}"
 # Ändert sich der Stamp (Dockerfile/Rust-Version), wird das Image automatisch neu gebaut
@@ -281,6 +288,7 @@ if grep -q "pi-docker-share-disabled" /opt/pi-packages/npm/lib/node_modules/@ear
         -e "HOME=/home/hostuser" \
         -v "${PI_GLOBAL_VOLUME}:/opt/pi-packages" \
         "${PI_TELEMETRY_ENV[@]}" \
+        "${PI_NPM_ENV[@]}" \
         "${PI_IMAGE_NAME}" \
         /bin/sh -c "mkdir -p /opt/pi-packages/npm; npm uninstall -g ${PI_LEGACY_PACKAGE} >/dev/null 2>&1 || true; npm uninstall -g @earendil-works/pi-coding-agent >/dev/null 2>&1 || true; npm install -g --no-audit --no-fund '${PI_CODING_AGENT_SPEC}' && printf '%s' '${PI_CODING_AGENT_VERSION}' > /opt/pi-packages/.pi-coding-agent-version"
 }
@@ -301,6 +309,7 @@ install_default_packages() {
         -e "HOME=/home/hostuser" \
         -e "PI_CODING_AGENT_DIR=/home/hostuser/.pi/agent" \
         "${PI_TELEMETRY_ENV[@]}" \
+        "${PI_NPM_ENV[@]}" \
         "${PI_IMAGE_NAME}" \
         /bin/sh -c "set -e; for spec in ${PI_DEFAULT_PACKAGES[*]}; do pi install \"\$spec\"; done; touch '${container_stamp}'"
 }
@@ -588,6 +597,8 @@ run_pi() {
         -v "${PI_GLOBAL_VOLUME}:/opt/pi-packages"
         # Datenschutz: keine Telemetrie, keine Update-Checks, kein Sentry
         "${PI_TELEMETRY_ENV[@]}"
+        # npm-Cache im Volume statt in $HOME
+        "${PI_NPM_ENV[@]}"
         # Umgebungsvariablen für das Volume
         -e "NPM_CONFIG_PREFIX=/opt/pi-packages/npm"
         -e "PYTHONUSERBASE=/opt/pi-packages/python"

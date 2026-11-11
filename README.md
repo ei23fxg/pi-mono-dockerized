@@ -77,6 +77,16 @@ By default Pi starts in a fixed working home, independent of where you invoke it
 - Keep the container target `/home/hostuser/pi-home`; Pi uses it as `$HOME`.
 - `-m` is a wrapper flag. Pi's model flag remains `--model`.
 
+### npm cache
+
+The wrapper sets `npm_config_cache` to `/opt/pi-packages/npm-cache` inside the persistent
+package volume. npm update checks and installs therefore no longer create `~/.npm` in
+the mounted Pi home.
+
+- Remove an old cache once: `rm -rf ~/pi-home/.npm`.
+- Clear the new cache from inside Pi: `npm cache clean --force`.
+- No image rebuild is required; the environment applies on the next container start.
+
 ```bash
 pi          # fixed Pi home
 pi -m       # current directory as working directory
