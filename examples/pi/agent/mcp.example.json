@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"],
+      "description": "Up-to-date library documentation",
+      "exposure": "deferred"
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+      "description": "Project files (already covered by Pi's built-in tools)",
+      "exposure": "deferred"
+    },
+    "remote-example": {
+      "url": "https://example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MCP_TOKEN}"
+      },
+      "description": "Remote MCP server with a bearer token from the environment",
+      "exposure": "deferred"
+    }
+  }
+}

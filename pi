@@ -8,25 +8,79 @@ fi
 set -euo pipefail
 
 # --- Konfiguration ---
+PI_SCRIPT_DIR="$(cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+
 CURRENT_DIR_HASH=$(printf '%s' "$PWD" | md5sum | cut -d' ' -f1)
 CURRENT_DIR_HASH_SHORT="${CURRENT_DIR_HASH: -6}"
 PROJECT_NAME="$(basename "$(pwd)")"
 PI_WORK_DIR="/${PROJECT_NAME}_${CURRENT_DIR_HASH_SHORT}"
 
+# Pi encodiert den Container-Pfad für seinen Session-Ordner:
+# führender Slash weg, "/" und ":" werden zu "-".
+PI_SAFE_WORK_DIR="${PI_WORK_DIR#/}"
+PI_SAFE_WORK_DIR="${PI_SAFE_WORK_DIR//\//-}"
+PI_SAFE_WORK_DIR="${PI_SAFE_WORK_DIR//:/-}"
+PI_SAFE_WORK_DIR="${PI_SAFE_WORK_DIR//\\/-}"
+
 PI_DOCKER_CONFIG_ROOT="$HOME/.pi"
-PI_API_KEY_FILES=(ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY GROQ_API_KEY XAI_API_KEY HF_TOKEN)
+PI_API_KEY_FILES=(ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY GROQ_API_KEY XAI_API_KEY HF_TOKEN GH_TOKEN GITHUB_TOKEN)
 PI_CONTAINER_NAME_PREFIX="pi-"
 PI_CONTAINER_NAME="${PI_CONTAINER_NAME_PREFIX}${CURRENT_DIR_HASH}"
 PI_IMAGE_NAME="pi:latest"
 PI_FOLDER="$HOME/.pi"
+PI_AGENT_DIR="${PI_FOLDER}/agent"
+PI_SESSION_MOUNT_NAME="--${PI_SAFE_WORK_DIR}--"
+PI_SESSION_DIR="${PI_AGENT_DIR}/sessions/${PI_SESSION_MOUNT_NAME}"
 PI_GLOBAL_VOLUME="pi-software-binaries"
 
+# Aktuelle Pi-Version (nicht mehr das alte @mariozechner-Paket).
+# Per Umgebung überschreibbar, z. B. PI_CODING_AGENT_VERSION=1.6.0
+PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-1.5.2}"
+PI_CODING_AGENT_SPEC="@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"
+PI_LEGACY_PACKAGE="@mariozechner/pi-coding-agent"
+PI_DEFAULT_PACKAGES=(
+    "npm:pi-web-access@0.47.0"
+    "npm:pi-webapp@0.1.55"
+)
+PI_PACKAGES_STAMP="2026-11-11"
+
+# Host-Netzwerk ist nötig, damit das Web-UI (127.0.0.1 im Container) vom
+# Host-Browser erreichbar ist. Mit PI_NETWORK_MODE=bridge abschaltbar.
+PI_NETWORK_MODE="${PI_NETWORK_MODE:-host}"
+
+# .git ist standardmäßig sichtbar, damit Pi lokal committen kann.
+# Mit PI_ALLOW_GIT=0 werden .git, .gitignore und .gitmodules verborgen.
+PI_ALLOW_GIT="${PI_ALLOW_GIT:-1}"
+
+# Git-Identität: aus der Host-Konfiguration übernehmen, per Umgebung
+# überschreibbar. Ohne Namen/E-Mail kann git keinen Commit erzeugen.
+PI_GIT_NAME="${PI_GIT_NAME:-$(git config --global user.name 2>/dev/null || true)}"
+PI_GIT_EMAIL="${PI_GIT_EMAIL:-$(git config --global user.email 2>/dev/null || true)}"
+
+# Diese Variablen gelten für jeden Pi-/npm-Aufruf im Container.
+PI_TELEMETRY_ENV=(
+    -e "PI_TELEMETRY=0"
+    -e "PI_WEB_SENTRY_ENABLED=false"
+    -e "PI_WEBAPP_AUTO_OPEN=0"
+    -e "DO_NOT_TRACK=1"
+    -e "NPM_CONFIG_UPDATE_NOTIFIER=false"
+)
+
+# Rust-Version für das Image (per Umgebung überschreibbar, z. B. PI_RUST_VERSION=1.83)
+PI_RUST_VERSION="${PI_RUST_VERSION:-stable}"
+# Ändert sich der Stamp (Dockerfile/Rust-Version), wird das Image automatisch neu gebaut
+PI_BUILD_STAMP="4-${PI_RUST_VERSION}"
+
 PI_DEFAULT_IGNORED_FILES=(.env .deploy .secret .git .build .vscode .gitmodules .pi .aiignore .aiexclude .copilotignore .gitignore .geminiignore .codeiumignore .cursorignore .DS_Store)
-PI_IGNORE_CONFIGS=(.aiignore .aiexclude .copilotignore .gitignore .geminiignore .codeiumignore .cursorignore)
 PI_EMPTY_DIR=$(mktemp -d)
+# Temporary sessions root with only this project's subdirectory. Mounting it
+# over ~/.pi/agent/sessions hides every other project while keeping Pi's
+# normal <sessions>/<encoded-cwd> layout (Web UI session discovery relies on it).
+PI_SESSION_PARENT=$(mktemp -d)
+mkdir -p "${PI_SESSION_PARENT}/${PI_SESSION_MOUNT_NAME}"
 
 cleanup() {
-    rm -rf "$PI_EMPTY_DIR" 2>/dev/null || true
+    rm -rf "$PI_EMPTY_DIR" "$PI_SESSION_PARENT" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -34,68 +88,210 @@ trap cleanup EXIT
 # Helper: Docker Image bauen
 # ---------------------------------------------------------------------------
 build_image() {
-    echo "Building pi base image..."
+    echo "Building pi base image (Rust: ${PI_RUST_VERSION})..."
     TEMP_BUILD_DIR=$(mktemp -d)
     cat > "${TEMP_BUILD_DIR}/Dockerfile" <<EOF
-FROM node:bookworm
+FROM node:22-bookworm-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl wget ffmpeg imagemagick jq make git ca-certificates \
-    python3 python3-pip python3-venv python3-full \
-    golang-go \
+# Grundlegende System- & Dev-Tools
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y --no-install-recommends \\
+    bash openssh-server curl wget git gh make gcc g++ gawk ripgrep jq ca-certificates \\
+    less procps unzip zip \\
+    ffmpeg imagemagick pandoc \\
+    python3 python3-pip python3-venv python3-full \\
+    golang \\
+    php-cli php-mbstring php-xml php-curl php-mysql php-zip composer \\
+    default-mysql-client \\
+    pkg-config libssl-dev cmake clang lld libclang-dev zlib1g-dev \\
     && rm -rf /var/lib/apt/lists/*
 
-RUN ln -s /usr/bin/python3 /usr/bin/python
-RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
+# python -> python3 (Kompatibilität für Tools/Install-Skripte)
+RUN ln -sf /usr/bin/python3 /usr/bin/python
+
+# pnpm (muss vor dem NPM-Prefix für das Volume installiert werden)
+RUN npm install -g pnpm@latest
+
+# Rust systemweit über rustup
+ARG RUST_VERSION=${PI_RUST_VERSION}
+ENV RUSTUP_HOME=/usr/local/rustup \\
+    CARGO_HOME=/usr/local/cargo
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \\
+      | sh -s -- -y --no-modify-path --profile minimal --default-toolchain "\${RUST_VERSION}" \\
+    && rustup component add rustfmt clippy \\
+    && chmod -R a+w /usr/local/rustup /usr/local/cargo \\
+    && rustc --version && cargo --version
+
+# uv (Python-Paketmanager)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Pfade für das persistente SOFTWARE-Volume
 ENV NPM_CONFIG_PREFIX=/opt/pi-packages/npm
 ENV PYTHONUSERBASE=/opt/pi-packages/python
 ENV GOPATH=/opt/pi-packages/go
-ENV PATH="/opt/pi-packages/npm/bin:/opt/pi-packages/python/bin:/opt/pi-packages/go/bin:/usr/local/bin:\${PATH}"
+ENV PATH="/opt/pi-packages/npm/bin:/opt/pi-packages/python/bin:/opt/pi-packages/go/bin:/usr/local/cargo/bin:/usr/local/bin:\${PATH}"
 ENV PIP_USER=true
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
-RUN mkdir -p /home/hostuser/.pi /opt/pi-packages/npm /opt/pi-packages/python /opt/pi-packages/go \
-    && chmod -R 777 /home/hostuser /opt/pi-packages \
+RUN mkdir -p /home/hostuser/.pi /opt/pi-packages/npm /opt/pi-packages/python /opt/pi-packages/go \\
+    && chmod -R 777 /home/hostuser /opt/pi-packages \\
     && chmod 777 /
 EOF
-    docker build -t "${PI_IMAGE_NAME}" -f "${TEMP_BUILD_DIR}/Dockerfile" "${TEMP_BUILD_DIR}"
+    docker build \
+        --label "pi.build.stamp=${PI_BUILD_STAMP}" \
+        --label "pi.managed=true" \
+        --build-arg "RUST_VERSION=${PI_RUST_VERSION}" \
+        -t "${PI_IMAGE_NAME}" \
+        -f "${TEMP_BUILD_DIR}/Dockerfile" \
+        "${TEMP_BUILD_DIR}"
     rm -rf "${TEMP_BUILD_DIR}"
 }
 
 # ---------------------------------------------------------------------------
-# Helper: Initialisierung (Settings & Volume)
+# Helper: Host-Konfiguration in ~/.pi/agent anlegen (nichts überschreiben)
 # ---------------------------------------------------------------------------
-bootstrap_environment() {
-    if [[ -z "$(docker images -q "${PI_IMAGE_NAME}" 2>/dev/null)" ]]; then
-        build_image
+seed_pi_config() {
+    local example_dir="${PI_SCRIPT_DIR}/examples/pi/agent"
+    local old_settings="${PI_FOLDER}/settings.json"
+    local new_settings="${PI_AGENT_DIR}/settings.json"
+
+    mkdir -p "${PI_AGENT_DIR}/skills" "${PI_SESSION_DIR}"
+
+    # Migration aus der alten Wrapper-Version: ~/.pi/settings.json -> ~/.pi/agent/settings.json
+    if [[ -f "${old_settings}" && ! -f "${new_settings}" ]]; then
+        local old_content
+        old_content="$(tr -d '[:space:]' < "${old_settings}" || true)"
+        if [[ -z "${old_content}" || "${old_content}" == "{}" ]]; then
+            if [[ -f "${example_dir}/settings.json" ]]; then
+                cp "${example_dir}/settings.json" "${new_settings}"
+                echo "Migrated empty ~/.pi/settings.json to ~/.pi/agent/settings.json with privacy defaults."
+            fi
+        else
+            cp "${old_settings}" "${new_settings}"
+            echo "Migrated ~/.pi/settings.json to ~/.pi/agent/settings.json. Review the privacy defaults in examples/pi/agent/settings.json."
+        fi
     fi
 
-    # 1. Host-Config Folder (.pi) vorbereiten
-    # Wir erstellen ihn auf dem Host VOR dem Mount, damit er deinem User gehört
-    mkdir -p "${PI_FOLDER}"
-    [[ ! -f "${PI_FOLDER}/settings.json" ]] && echo "{}" > "${PI_FOLDER}/settings.json"
-    
-    # 2. Software-Volume für NPM/Python binaries
-    docker volume create "${PI_GLOBAL_VOLUME}" > /dev/null
-    # Fix Permissions im Volume (einmalig)
-    docker run --rm -v "${PI_GLOBAL_VOLUME}:/data" busybox chown -R "$(id -u):$(id -g)" /data
+    if [[ -d "${example_dir}" ]]; then
+        [[ -f "${new_settings}" ]] || cp "${example_dir}/settings.json" "${new_settings}"
+        [[ -f "${PI_AGENT_DIR}/mcp.json" ]] || cp "${example_dir}/mcp.json" "${PI_AGENT_DIR}/mcp.json"
+        [[ -f "${PI_AGENT_DIR}/web-search.json" ]] || cp "${example_dir}/web-search.json" "${PI_AGENT_DIR}/web-search.json"
+        if [[ ! -f "${PI_AGENT_DIR}/skills/llm-wiki/SKILL.md" ]]; then
+            mkdir -p "${PI_AGENT_DIR}/skills/llm-wiki"
+            cp "${example_dir}/skills/llm-wiki/SKILL.md" "${PI_AGENT_DIR}/skills/llm-wiki/SKILL.md"
+        fi
+    else
+        echo "Warning: ${example_dir} not found; Pi config was not seeded." >&2
+    fi
+}
 
-    # 3. Pi Agent Check (Installation im Volume, falls nötig)
-    if ! docker run --rm \
+# ---------------------------------------------------------------------------
+# Helper: Pi selbst (aktuelle @earendil-works-Version) im Volume installieren
+# ---------------------------------------------------------------------------
+ensure_pi() {
+    local installed_version=""
+    installed_version="$(docker run --rm \
         --user "$(id -u):$(id -g)" \
         -v "${PI_GLOBAL_VOLUME}:/opt/pi-packages" \
         "${PI_IMAGE_NAME}" \
-        ls /opt/pi-packages/npm/bin/pi >/dev/null 2>&1; then
-        
-        echo "Installing pi coding agent into persistent volume..."
-        docker run --rm \
-            --user "$(id -u):$(id -g)" \
-            -v "${PI_GLOBAL_VOLUME}:/opt/pi-packages" \
-            "${PI_IMAGE_NAME}" \
-            /bin/sh -c "npm install -g @mariozechner/pi-coding-agent@latest @steipete/summarize@latest"
+        /bin/sh -c 'if [ -x /opt/pi-packages/npm/bin/pi ] && [ -f /opt/pi-packages/.pi-coding-agent-version ]; then cat /opt/pi-packages/.pi-coding-agent-version; fi' \
+        2>/dev/null || true)"
+
+    if [[ "${installed_version}" == "${PI_CODING_AGENT_VERSION}" ]]; then
+        return
     fi
+
+    echo "Installing Pi ${PI_CODING_AGENT_VERSION} into persistent volume..."
+    docker run --rm \
+        --user "$(id -u):$(id -g)" \
+        -e "HOME=/home/hostuser" \
+        -v "${PI_GLOBAL_VOLUME}:/opt/pi-packages" \
+        "${PI_TELEMETRY_ENV[@]}" \
+        "${PI_IMAGE_NAME}" \
+        /bin/sh -c "mkdir -p /opt/pi-packages/npm; npm uninstall -g ${PI_LEGACY_PACKAGE} >/dev/null 2>&1 || true; npm install -g --no-audit --no-fund '${PI_CODING_AGENT_SPEC}' && printf '%s' '${PI_CODING_AGENT_VERSION}' > /opt/pi-packages/.pi-coding-agent-version"
+}
+
+# ---------------------------------------------------------------------------
+# Helper: früheres /share-Patching rückgängig machen (Migration)
+# ---------------------------------------------------------------------------
+restore_pi_share() {
+    local restore_script="${PI_SCRIPT_DIR}/scripts/restore-pi-share.sh"
+    local marker="${PI_AGENT_DIR}/.share-restored-v1"
+    [[ -f "${marker}" ]] && return
+    if [[ ! -f "${restore_script}" ]]; then
+        return
+    fi
+
+    if docker run --rm \
+        --user "$(id -u):$(id -g)" \
+        -e "HOME=/home/hostuser" \
+        -v "${PI_GLOBAL_VOLUME}:/opt/pi-packages" \
+        -v "${restore_script}:/tmp/restore-pi-share.sh:ro" \
+        "${PI_IMAGE_NAME}" \
+        /bin/sh /tmp/restore-pi-share.sh; then
+        touch "${marker}"
+    else
+        echo "Warning: a previous /share patch could not be reverted; reinstall Pi if /share stays disabled." >&2
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Helper: Standard-Pi-Pakete einmalig installieren
+# ---------------------------------------------------------------------------
+install_default_packages() {
+    local host_stamp="${PI_AGENT_DIR}/.dockerized-packages-${PI_PACKAGES_STAMP}"
+    local container_stamp="/home/hostuser/.pi/agent/.dockerized-packages-${PI_PACKAGES_STAMP}"
+    [[ -f "${host_stamp}" ]] && return
+
+    echo "Installing default Pi packages (pi-web-access, pi-webapp)..."
+    docker run --rm \
+        --user "$(id -u):$(id -g)" \
+        -v "${PI_FOLDER}:/home/hostuser/.pi" \
+        -v "${PI_GLOBAL_VOLUME}:/opt/pi-packages" \
+        -e "HOME=/home/hostuser" \
+        -e "PI_CODING_AGENT_DIR=/home/hostuser/.pi/agent" \
+        "${PI_TELEMETRY_ENV[@]}" \
+        "${PI_IMAGE_NAME}" \
+        /bin/sh -c "set -e; for spec in ${PI_DEFAULT_PACKAGES[*]}; do pi install \"\$spec\"; done; touch '${container_stamp}'"
+}
+
+# ---------------------------------------------------------------------------
+# Helper: Initialisierung (Settings, Session-Isolation & Volume)
+# ---------------------------------------------------------------------------
+bootstrap_environment() {
+    local image_id image_stamp
+    image_id="$(docker images -q "${PI_IMAGE_NAME}" 2>/dev/null || true)"
+    image_stamp=""
+    if [[ -n "${image_id}" ]]; then
+        image_stamp="$(docker image inspect \
+            --format '{{ if .Config.Labels }}{{ index .Config.Labels "pi.build.stamp" }}{{ end }}' \
+            "${PI_IMAGE_NAME}" 2>/dev/null || true)"
+    fi
+
+    # Fehlendes oder veraltetes Image (Dockerfile/Rust-Version geändert) neu bauen
+    if [[ -z "${image_id}" ]]; then
+        echo "pi: image ${PI_IMAGE_NAME} is missing; rebuilding."
+        echo "pi: global 'docker image prune -a' or 'docker system prune -a' removes it between sessions."
+        build_image
+    elif [[ "${image_stamp}" != "${PI_BUILD_STAMP}" ]]; then
+        echo "pi: image ${PI_IMAGE_NAME} has an old build stamp; rebuilding."
+        build_image
+    fi
+
+    # 1. Host-Config und projekt-eigenen Session-Ordner vorbereiten
+    mkdir -p "${PI_FOLDER}" "${PI_AGENT_DIR}" "${PI_SESSION_DIR}"
+    seed_pi_config
+
+    # 2. Software-Volume für NPM/Python binaries
+    docker volume create --label "pi.managed=true" "${PI_GLOBAL_VOLUME}" > /dev/null
+    # Fix Permissions im Volume (einmalig)
+    docker run --rm -v "${PI_GLOBAL_VOLUME}:/data" busybox chown -R "$(id -u):$(id -g)" /data
+
+    # 3. Pi installieren/aktualisieren, altes Share-Patching zurücknehmen,
+    #    Standardpakete installieren
+    ensure_pi
+    restore_pi_share
+    install_default_packages
 }
 
 # ---------------------------------------------------------------------------
@@ -111,12 +307,16 @@ run_pi() {
     DOCKER_ARGS=(
         --rm
         -it
+        --network "${PI_NETWORK_MODE}"
         --user "$(id -u):$(id -g)"
         -e "HOME=/home/hostuser"
+        -e "PI_CODING_AGENT_DIR=/home/hostuser/.pi/agent"
         # DER ENTSCHEIDENDE MOUNT: .pi Verzeichnis direkt spiegeln
         -v "${PI_FOLDER}:/home/hostuser/.pi"
         # Das Software-Volume (NPM/Python Pakete)
         -v "${PI_GLOBAL_VOLUME}:/opt/pi-packages"
+        # Datenschutz: keine Telemetrie, keine Update-Checks, kein Sentry
+        "${PI_TELEMETRY_ENV[@]}"
         # Umgebungsvariablen für das Volume
         -e "NPM_CONFIG_PREFIX=/opt/pi-packages/npm"
         -e "PYTHONUSERBASE=/opt/pi-packages/python"
@@ -128,12 +328,27 @@ run_pi() {
     if [[ "$mode" == "project" ]]; then
         DOCKER_ARGS+=(--name "${PI_CONTAINER_NAME}")
         DOCKER_ARGS+=(-v "$(pwd):${PI_WORK_DIR}")
+        # Nur die Sessions dieses Projekts sind sichtbar. Ein temporärer
+        # sessions-Root enthält ausschließlich den Projekt-Unterordner; die
+        # normale <sessions>/<encoded-cwd>-Struktur bleibt erhalten.
+        DOCKER_ARGS+=(-v "${PI_SESSION_PARENT}:/home/hostuser/.pi/agent/sessions")
+        DOCKER_ARGS+=(-v "${PI_SESSION_DIR}:/home/hostuser/.pi/agent/sessions/${PI_SESSION_MOUNT_NAME}")
+        DOCKER_ARGS+=(-e "PI_CODING_AGENT_SESSION_DIR=/home/hostuser/.pi/agent/sessions/${PI_SESSION_MOUNT_NAME}")
         DOCKER_ARGS+=(-e "PI_PROJECT_NAME=${PROJECT_NAME}")
+        [[ -n "${PI_GIT_NAME}" ]] && DOCKER_ARGS+=(-e "GIT_AUTHOR_NAME=${PI_GIT_NAME}" -e "GIT_COMMITTER_NAME=${PI_GIT_NAME}")
+        [[ -n "${PI_GIT_EMAIL}" ]] && DOCKER_ARGS+=(-e "GIT_AUTHOR_EMAIL=${PI_GIT_EMAIL}" -e "GIT_COMMITTER_EMAIL=${PI_GIT_EMAIL}")
         
         docker rm -f "${PI_CONTAINER_NAME}" 2>/dev/null || true
 
         # Ignores via /dev/null mounts
+        local -a ignored_files=()
         for file in "${PI_DEFAULT_IGNORED_FILES[@]}"; do
+            if [[ "$PI_ALLOW_GIT" == "1" && ( "$file" == ".git" || "$file" == ".gitignore" || "$file" == ".gitmodules" ) ]]; then
+                continue
+            fi
+            ignored_files+=("$file")
+        done
+        for file in "${ignored_files[@]}"; do
             if [[ -d "./$file" ]]; then
                 DOCKER_ARGS+=(-v "${PI_EMPTY_DIR}:${PI_WORK_DIR}/$file")
             elif [[ -f "./$file" ]]; then
@@ -146,15 +361,28 @@ run_pi() {
             key_file="${PI_DOCKER_CONFIG_ROOT}/$key"
             [[ -f "$key_file" ]] && DOCKER_ARGS+=(-e "$key=$(cat "$key_file")")
         done
-        
-        INNER_CMD="cd ${PI_WORK_DIR} && pi $*"
-    else
-        INNER_CMD="pi $*"
     fi
 
-    # Startbefehl
-    docker run "${DOCKER_ARGS[@]}" "${PI_IMAGE_NAME}" /bin/sh -c \
-        "export PATH=/opt/pi-packages/npm/bin:/opt/pi-packages/python/bin:/opt/pi-packages/go/bin:/usr/local/bin:\$PATH && $INNER_CMD"
+    # Startbefehl: Argumente werden als echte Argumente übergeben, nicht in
+    # einen Shell-String interpoliert. So bleiben Leerzeichen und Quotes in
+    # Prompts erhalten.
+    if [[ "$mode" == "project" ]]; then
+        # Projekt-Trust standardmäßig aus: keine projekt-eigenen Extensions/Skills.
+        # Ein explizites --approve/-a in den Pi-Argumenten hebt das für diesen
+        # Aufruf bewusst auf.
+        local approve_flag="--no-approve"
+        for arg in "$@"; do
+            if [[ "$arg" == "--approve" || "$arg" == "-a" ]]; then
+                approve_flag=""
+                break
+            fi
+        done
+        docker run "${DOCKER_ARGS[@]}" "${PI_IMAGE_NAME}" \
+            /bin/sh -c "cd \"\$1\" && shift && exec pi ${approve_flag} \"\$@\"" pi "${PI_WORK_DIR}" "$@"
+    else
+        docker run "${DOCKER_ARGS[@]}" "${PI_IMAGE_NAME}" \
+            /bin/sh -c 'exec pi "$@"' pi "$@"
+    fi
 }
 
 # --- Routing ---
@@ -165,7 +393,7 @@ if [[ "${PI_COMMAND}" == "rebuild" ]]; then
     PI_COMMAND="${1:-}"
 fi
 
-PI_CONFIG_COMMANDS="install remove uninstall update list config"
+PI_CONFIG_COMMANDS="install remove uninstall update list config auth mcp"
 for cmd in $PI_CONFIG_COMMANDS; do
     if [[ "${PI_COMMAND}" == "$cmd" ]]; then
         run_pi "config" "$@"

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://pi.dev/schemas/settings.schema.json",
+  "enableInstallTelemetry": false,
+  "enableAnalytics": false,
+  "compaction": {
+    "enabled": true
+  },
+  "defaultProjectTrust": "never",
+  "packages": [
+    "npm:pi-web-access@0.47.0",
+    "npm:pi-webapp@0.1.55"
+  ]
+}

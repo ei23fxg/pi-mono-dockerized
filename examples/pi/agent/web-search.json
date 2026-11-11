@@ -1,0 +1,10 @@
+{
+  "searxngBaseUrl": "http://192.168.178.2:4000",
+  "searchRouting": {
+    "providers": ["searxng"],
+    "fallbackOn": ["transient", "quota", "network", "invalid-response"]
+  },
+  "ssrf": {
+    "allowRanges": ["192.168.178.2/32"]
+  }
+}

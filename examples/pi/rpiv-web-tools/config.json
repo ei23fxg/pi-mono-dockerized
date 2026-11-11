@@ -1,0 +1,6 @@
+{
+  "provider": "searxng",
+  "baseUrls": {
+    "searxng": "http://192.168.178.2:4000"
+  }
+}
