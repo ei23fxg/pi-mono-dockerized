@@ -70,7 +70,7 @@ PI_LEGACY_PACKAGE="@mariozechner/pi-coding-agent"
 # Wer trotzdem reproduktiv fixieren will, pinnt (dann entfällt die Meldung):
 #   PI_PACKAGE_PINS="pi-web-access@0.47.0,pi-webapp@0.1.55" pi ...
 # Ein einzelnes Paket unterdrücken: PI_SKIP_PACKAGES="billion-context" pi ...
-PI_DEFAULT_PACKAGE_NAMES=(pi-web-access pi-webapp pi-token-speed billion-context)
+PI_DEFAULT_PACKAGE_NAMES=(pi-web-access pi-webapp pi-token-speed billion-context pi-context-view)
 PI_PACKAGE_PINS="${PI_PACKAGE_PINS:-}"
 PI_SKIP_PACKAGES="${PI_SKIP_PACKAGES:-}"
 PI_DEFAULT_PACKAGES=()
@@ -89,7 +89,7 @@ for _pkg_name in "${PI_DEFAULT_PACKAGE_NAMES[@]}"; do
     PI_DEFAULT_PACKAGES+=("npm:${_pkg_name}${_pkg_pin:+@${_pkg_pin}}")
 done
 unset _pkg_name _pkg_pin _pin_spec _skip _skip_name _saved_ifs
-PI_PACKAGES_STAMP="2026-11-11-unpinned"
+PI_PACKAGES_STAMP="2026-11-12-context-view"
 
 # billion-context (Kontextkompression): Session-Records und Konfiguration dürfen
 # nicht im flüchtigen Container-$HOME landen.
