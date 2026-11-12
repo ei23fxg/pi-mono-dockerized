@@ -775,6 +775,12 @@ while [[ -n "${PI_COMMAND}" ]]; do
                     -*)
                         break
                         ;;
+                    web)
+                        # "web" ist der Web-UI-Shortcut, kein Dateipfad.
+                        # Ein Projekt-Ordner/eine Datei namens "web" lässt
+                        # sich mit ./web explizit mounten.
+                        break
+                        ;;
                 esac
                 if [[ -d "$1" ]]; then
                     echo "Error: 'pi -m $1' is not supported. Use 'pi -m' without file arguments for the whole directory." >&2

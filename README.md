@@ -33,6 +33,7 @@ directory is **not** visible unless you use `-m`. All other Pi arguments are for
 | `pi rebuild` | Force-rebuild the Docker image (`PI_RUST_VERSION=1.83 pi rebuild` to pin Rust) |
 
 - `-m` is a wrapper flag; Pi's own model flag stays `--model`.
+- `web` directly after `-m` is always the Web UI shortcut, never a path — even if your project contains a file or folder named `web`. To mount such a path, write `./web` (or any path that isn't the bare word).
 - With file arguments, leading existing files are mounted individually; use `--` before a prompt that could be mistaken for a filename.
 - A full `pi -m` mount hides `.env`, `.secret`, `.deploy`, `.build`, `.vscode`, ignore-files and `.pi/` (except `.pi/APPEND_SYSTEM.md` and `.pi/SYSTEM.md`). `.git`, `.gitignore`, `.gitmodules` are visible by default — set `PI_ALLOW_GIT=0` to hide them.
 - Each mode keeps its own sessions; you never see sessions from other projects or from the Pi home.
