@@ -112,9 +112,25 @@ BILI_SESSIONS_DIR=/home/hostuser/.pi/agent/billion-context
 BILI_CONFIG_FILE=/home/hostuser/.pi/agent/billion-context.json
 ```
 
-In-session: `/acp` (context state), `/acp-cache` (prefix-cache hit rate). Optional config, e.g.
-sub-agents off but compression on: `{ "pi": { "subagents": false } }`. Compression costs model
-calls; a healthy session should still show 95–97% prefix-cache hit rate. To remove:
+In-session: `/acp` (context state), `/acp-cache` (prefix-cache hit rate). To turn **off**
+delegate/sub-agent tools but keep compression, put this in `~/.pi/agent/billion-context.json`:
+
+```json
+{
+  "providers": {},
+  "pi": {
+    "subagents": false
+  }
+}
+```
+
+A matching guard in `~/.pi/agent/APPEND_SYSTEM.md` helps the model respect it, e.g.:
+
+> **Subagents and delegation** Do not start subagents or parallel model requests since most of
+> the time this is running a local model which is limited. Run everything sequentially in the
+> main session.
+
+Compression costs model calls; a healthy session should still show 95–97% prefix-cache hit rate. To remove:
 `pi remove npm:billion-context` (then `compaction.enabled: true` is correct again).
 
 ## npm cache

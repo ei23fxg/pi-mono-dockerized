@@ -14,4 +14,5 @@ You are running inside a Docker container managed by `pi-mono-dockerized`, based
 - **Git:** local commits are allowed and a host identity is provided. Do not push or create signed commits unless credentials/signing are explicitly configured.
 - **Network:** internet access is available. Web search is routed through the local SearXNG instance by default.
 - **Privacy:** `/share` and `/bug` upload data. Use them only when the user explicitly asks.
+- **Subagents and delegation:** Do not start subagents or parallel model requests since most of the time this is running a local model which is limited. Run everything sequentially in the main session.
 - **Access checks:** if a path is outside the working home, the `pi -m` project, or configured mounts, or appears to be hidden, ask the user before trying to access it.

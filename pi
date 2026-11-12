@@ -489,7 +489,8 @@ setup_selective_mounts() {
 # Helper: festes Pi-Home in mounts.conf sicherstellen
 # ---------------------------------------------------------------------------
 ensure_home_mount() {
-    mkdir -p "${PI_HOME_DIR}"
+    # Achtung: PI_HOME_DIR erst anlegen, wenn kein User-Eintrag in mounts.conf
+    # das Pi-Home already auf ein anderes Host-Verzeichnis zeigt.
     mkdir -p "$(dirname "${PI_MOUNTS_FILE}")" 2>/dev/null || true
     touch "${PI_MOUNTS_FILE}" 2>/dev/null || true
     if [[ ! -f "${PI_MOUNTS_FILE}" ]]; then
@@ -560,6 +561,7 @@ ensure_home_mount() {
         fi
     done < "${PI_MOUNTS_FILE}"
 
+    mkdir -p "${PI_HOME_DIR}"
     if ! printf '\n# Managed by pi-mono-dockerized: fixed Pi working home\n%s:%s\n' "${PI_HOME_DIR}" "${PI_HOME_CONTAINER}" >> "${PI_MOUNTS_FILE}"; then
         echo "Error: could not add the Pi home mount to ${PI_MOUNTS_FILE}." >&2
         return 1
@@ -807,9 +809,22 @@ while [[ -n "${PI_COMMAND}" ]]; do
 done
 
 # Shortcut: Pi starten und direkt den /web-Extension-Command ausführen.
-if [[ "${PI_COMMAND}" == "web" ]]; then
+# Funktioniert auch in Kombination mit den Pi-Session-Flags -c/-r
+# (z. B. "pi -m -c web" = letzte Projekt-Session fortsetzen und Web UI öffnen).
+PI_WEB_FLAGS=()
+PI_WEB_SCAN="${PI_COMMAND}"
+case "${PI_WEB_SCAN}" in
+    -c|--continue|-r|--resume)
+        PI_WEB_FLAGS=("${PI_WEB_SCAN}")
+        PI_WEB_SCAN="${2:-}"
+        ;;
+esac
+if [[ "${PI_WEB_SCAN}" == "web" ]]; then
+    if (( ${#PI_WEB_FLAGS[@]} > 0 )); then
+        shift
+    fi
     shift
-    run_pi "project" "/web" "$@"
+    run_pi "project" "/web" ${PI_WEB_FLAGS[@]+"${PI_WEB_FLAGS[@]}"} "$@"
     exit $?
 fi
 

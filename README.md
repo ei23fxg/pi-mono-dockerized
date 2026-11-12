@@ -57,6 +57,8 @@ pi -m @file1.md @file2.md "prompt"   # context files + prompt in one go
 # Web UI
 pi web                           # fixed home + /web (browser workspace)
 pi -m web                        # Web UI scoped to the current project
+pi -m -c web                     # continue the project's last session, open Web UI
+pi -m -r web                     # pick a project session, open Web UI
 
 # One-off exposure of default-hidden project files
 pi --show-hidden -m              # .env, .pi, etc. visible for this run
@@ -124,7 +126,7 @@ The image ships Pi 1.x plus these packages (installed on first run, updated via 
 - **`pi-web-access`** — web search/fetch, PDFs, GitHub, YouTube; searches go to your local SearXNG (`http://192.168.178.2:4000`) with no external fallback
 - **`pi-webapp`** — browser workspace: chat, files, real terminal, Git review (`/web` in-session, `pi web` as shortcut)
 - **`pi-token-speed`** — tokens/second and time-to-first-token in the status bar (`/tps`)
-- **`billion-context`** — context compression for long sessions (`/acp`, `/acp-cache`); replaces Pi's auto-compaction while active. Remove with `pi remove npm:billion-context` if unwanted
+- **`billion-context`** — context compression for long sessions (`/acp`, `/acp-cache`); replaces Pi's auto-compaction while active. Disable its delegate/sub-agent tools (keep compression) via `~/.pi/agent/billion-context.json` — see [docs/troubleshooting.md](docs/troubleshooting.md). Remove entirely with `pi remove npm:billion-context`
 - **`pi-context-view`** — visualize what fills the context window; inspect system prompt and tool definitions (`/context`)
 - **Built-in MCP** — `pi mcp add <name> -- <command>`, config in `~/.pi/agent/mcp.json`
 - **`llm-wiki` skill** — build a persistent Markdown wiki from your sources on demand: `/skill:llm-wiki create a wiki for …`
@@ -144,12 +146,16 @@ Seeded once into `~/.pi/agent` (existing files are never overwritten; reference 
 ~/.pi/agent/mcp.json          # MCP servers
 ~/.pi/agent/web-search.json   # SearXNG address for pi-web-access
 ~/.pi/agent/APPEND_SYSTEM.md  # persistent system-prompt addendum (seeded with container info)
+~/.pi/agent/billion-context.json  # optional billion-context config (e.g. disable sub-agents)
 ~/.pi/agent/skills/llm-wiki/  # global wiki skill
 ~/.pi/mounts.conf             # permanent extra mounts (optional)
 ```
 
 Provider/model setup: [pi.dev/docs/latest/models](https://pi.dev/docs/latest/models).
 Persistent instructions: edit `~/.pi/agent/APPEND_SYSTEM.md` (`/reload` applies it in a session).
+The seeded template includes a **sub-agents/delegation guard** (sequential execution, for local
+or limited models). If your `APPEND_SYSTEM.md` predates this update, add it yourself — and pair
+it with `"pi": { "subagents": false }` in `billion-context.json` to also remove the tools.
 
 ### Wrapper variables
 
