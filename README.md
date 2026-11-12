@@ -37,6 +37,73 @@ directory is **not** visible unless you use `-m`. All other Pi arguments are for
 - A full `pi -m` mount hides `.env`, `.secret`, `.deploy`, `.build`, `.vscode`, ignore-files and `.pi/` (except `.pi/APPEND_SYSTEM.md` and `.pi/SYSTEM.md`). `.git`, `.gitignore`, `.gitmodules` are visible by default — set `PI_ALLOW_GIT=0` to hide them.
 - Each mode keeps its own sessions; you never see sessions from other projects or from the Pi home.
 
+### All commands
+
+Everything except the wrapper-only words (`-m`, `web`, `rebuild`, `--show-hidden`) is forwarded
+unchanged to `pi` inside the container.
+
+```bash
+# Interactive sessions (start in the fixed Pi home)
+pi                               # fixed home session
+pi -m                            # mount current directory and work there
+pi -m README.md TEXT.md          # mount only these files
+pi -m "MY FILE.md"               # quoted filename with spaces
+pi -c                            # continue last session of the fixed home
+pi -m -c                         # continue last session of the current project
+pi -r                            # resume: pick from the current context's sessions
+pi -m @AGENTS.md                 # load project context file into the prompt
+pi -m @file1.md @file2.md "prompt"   # context files + prompt in one go
+
+# Web UI
+pi web                           # fixed home + /web (browser workspace)
+pi -m web                        # Web UI scoped to the current project
+
+# One-off exposure of default-hidden project files
+pi --show-hidden -m              # .env, .pi, etc. visible for this run
+pi --show-hidden -m web          # combinable with other wrapper commands
+
+# Non-interactive (print mode)
+pi -m -p "fix the bug in src/app.ts"
+pi -m README.md -p "summarize this file"
+pi -m README.md -- "summarize"   # force next argument to be the prompt
+pi -m -p --model anthropic/claude-sonnet-4 "explain this code" @main.py
+
+# Session handling (forwarded to Pi)
+pi --session /path/to/session.json   # use a specific session file
+pi --no-session                      # ephemeral, nothing is saved
+
+# In-session slash commands (inside Pi, not the wrapper)
+/web                               # open the browser workspace
+/tps                               # token speed indicator
+/acp  /acp-cache                   # billion-context state / cache stats
+/context                           # pi-context-view: usage map
+/skill:llm-wiki create a wiki …    # load the wiki skill on demand
+/mcp                               # inspect/manage MCP servers
+/share                             # manual session upload (review first)
+
+# MCP servers
+pi mcp add filesystem -- npx -y @modelcontextprotocol/server-filesystem .
+pi mcp list
+
+# Package management
+pi install npm:pi-subagents        # from npm
+pi install git:github.com/user/repo
+pi install ./local/path
+pi remove npm:pi-subagents
+pi list                            # what is installed
+pi config                          # TUI to enable/disable packages
+pi update --extensions             # update packages only
+pi update --all                    # update Pi and packages
+
+# Image management
+pi rebuild                         # force-rebuild the Docker image
+PI_RUST_VERSION=1.83 pi rebuild    # rebuild with a pinned Rust version
+```
+
+The image rebuilds automatically when the build stamp changes (bumped whenever the embedded
+Dockerfile changes) or when `PI_RUST_VERSION` changes. Default packages are floating (unpinned):
+Pi shows a `Run pi update --extensions` notice when updates exist — nothing is upgraded on its own.
+
 ### Extra mounts
 
 Permanent additional mounts go in `~/.pi/mounts.conf` (one per line, applied on next start):
@@ -86,17 +153,29 @@ Persistent instructions: edit `~/.pi/agent/APPEND_SYSTEM.md` (`/reload` applies 
 
 ### Wrapper variables
 
+These are **shell environment variables on the host** that the `pi` script reads before it starts
+Docker — they are *not* Pi settings and do not belong in `~/.pi/agent/settings.json`. Set them
+either per run (prefix before the command) or permanently (`export` in your `~/.bashrc`/`~/.zshrc`):
+
+```bash
+PI_ALLOW_GIT=0 pi -m            # just this run
+export PI_ALLOW_GIT=0          # all future runs in your shell
+```
+
+Some variables only take effect at first setup (marked below); changes afterwards are ignored or
+require deleting the generated config entry.
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `PI_ALLOW_GIT` | `1` | `0` hides `.git`, `.gitignore`, `.gitmodules` |
 | `PI_SHOW_HIDDEN` | `0` | `1` exposes all hidden project files for one full-project run |
 | `PI_GIT_NAME` / `PI_GIT_EMAIL` | host values | Commit identity inside the container |
-| `PI_HOME_DIR` | `~/pi-home` | Host source of the fixed Pi home (until the `mounts.conf` entry exists) |
+| `PI_HOME_DIR` | `~/pi-home` | Host source of the fixed Pi home — **first run only**; afterwards the `mounts.conf` entry is authoritative |
 | `PI_MOUNT_CWD` | `0` | `1` behaves like `pi -m` always |
 | `PI_MOUNTS_FILE` | `~/.pi/mounts.conf` | Location of the extra-mounts config |
 | `PI_SKIP_PACKAGES` | empty | Skip default packages, e.g. `PI_SKIP_PACKAGES="billion-context" pi` |
 | `PI_PACKAGE_PINS` | empty | Pin exact versions, e.g. `pi-web-access@0.47.0` (disables update notices) |
-| `PI_RUST_VERSION` | `stable` | Rust toolchain baked into the image |
+| `PI_RUST_VERSION` | `stable` | Rust toolchain baked into the image (change ⇒ image rebuild) |
 
 ## Git
 
