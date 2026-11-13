@@ -77,6 +77,7 @@ pi --no-session                      # ephemeral, nothing is saved
 
 # In-session slash commands (inside Pi, not the wrapper)
 /web                               # open the browser workspace
+/plan                              # read-only planning mode; /plan exit leaves it (no startup flag)
 /tps                               # token speed indicator
 /acp  /acp-cache                   # billion-context state / cache stats
 /context                           # pi-context-view: usage map
@@ -129,6 +130,7 @@ The image ships Pi 1.x plus these packages (installed on first run, updated via 
 - **`pi-token-speed`** — tokens/second and time-to-first-token in the status bar (`/tps`)
 - **`billion-context`** — context compression for long sessions (`/acp`, `/acp-cache`); replaces Pi's auto-compaction while active. Disable its delegate/sub-agent tools (keep compression) via `~/.pi/agent/billion-context.json` — see [docs/troubleshooting.md](docs/troubleshooting.md). Remove entirely with `pi remove npm:billion-context`
 - **`pi-context-view`** — visualize what fills the context window; inspect system prompt and tool definitions (`/context`)
+- **`@narumitw/pi-plan-mode`** — Codex-like read-only `/plan` mode: explore and design first, edits stay blocked until you approve the plan (`/plan`, `/plan <prompt>`, `/plan exit`). Installed as a Pi package; there is **no startup switch** in Pi or the extension, so start it per session — the seeded system prompt still tells the agent to plan before non-trivial changes. Options (tool allowlist, export path, fresh-implementation model) live in `~/.pi/agent/pi-plan-mode.json`
 - **Built-in MCP** — `pi mcp add <name> -- <command>`, config in `~/.pi/agent/mcp.json`
 - **`llm-wiki` skill** — build a persistent Markdown wiki from your sources on demand: `/skill:llm-wiki create a wiki for …`
 
