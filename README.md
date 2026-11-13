@@ -160,6 +160,13 @@ The seeded template includes a **sub-agents/delegation guard** (sequential execu
 or limited models). If your `APPEND_SYSTEM.md` predates this update, add it yourself — and pair
 it with `"pi": { "subagents": false }` in `billion-context.json` to also remove the tools.
 
+The template also carries the **working loop** (plan first, `TODO.md` with `- [ ]`/`- [~]`/`- [x]`,
+quality gate before `[x]`, git checkpoint after each green step). Seeds are only written when a
+file is missing, so an existing `~/.pi/agent/APPEND_SYSTEM.md` keeps your version — copy the
+`Working loop` block from [`examples/pi/agent/APPEND_SYSTEM.md`](examples/pi/agent/APPEND_SYSTEM.md)
+into it. An existing `~/.pi` also gets the plan-mode package automatically: the wrapper re-runs the
+one-time package install whenever `PI_PACKAGES_STAMP` changes.
+
 ### Wrapper variables
 
 These are **shell environment variables on the host** that the `pi` script reads before it starts
