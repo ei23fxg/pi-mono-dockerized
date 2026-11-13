@@ -7,6 +7,10 @@ the host. One command starts a session: `pi`.
 
 > **Note:** A Bash script, **Linux only**. The first run builds the image and installs Pi — expect a few minutes.
 
+Sister project: [dsh-dockerized](https://github.com/ei23fxg/dsh-dockerized) runs
+[DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh) with the same wrapper —
+see [Related project](#related-project).
+
 ## Quick start
 
 ```bash
@@ -251,6 +255,31 @@ user's permissions.
 - Old `~/.pi` owned by root after legacy runs: `sudo chown -R $(whoami):$(id -gn) ~/.pi`.
 
 More (image/volume lifecycle, diagnostics, legacy migrations): [docs/troubleshooting.md](docs/troubleshooting.md).
+
+## Related project
+
+[dsh-dockerized](https://github.com/ei23fxg/dsh-dockerized) applies this exact wrapper to
+[DeepSeek Harness (`dsh`)](https://www.npmjs.com/package/@deepseek-ai/dsh): one Bash script, the
+whole toolchain in the image, everything else in `~/.dsh` on the host, started with `dsh`. Its
+default mode is the **web UI** (port 3080, tokenized URL printed in the terminal) rather than a
+TUI; for terminal work it has `dsh headless "…"` one-shot tasks, and projects go in with `dsh -m`.
+Configuration lives in DSH patch layers — the home patch (`~/.dsh/cordis.patch.yml`) is where
+providers, model defaults, telemetry kills and the system prompt go — and its SearXNG search
+plugin is baked into the image. If you want profiles, plugins and a browser-first workspace,
+run that one; if you want a terminal coding agent with a browser option, run this one.
+
+The conventions are deliberately the same, so habits transfer:
+
+| | pi-mono-dockerized | dsh-dockerized |
+|---|---|---|
+| wrapper flags | `-m`, `-ro`, `--show-hidden`, `web`, `rebuild` | `-m`, `-ro`, `--show-hidden`, `rebuild` |
+| extra mounts | `~/.pi/mounts.conf` (`host:container:ro`) | `~/.dsh/mounts.conf`, same format |
+| fixed working home | `~/pi-home` | `~/dsh-home` |
+| sessions | one context per fixed home / project | same scheme |
+| networking | `--network host`, no port mapping | same |
+| git | injected identity + snapshot commit for repo-less projects (`PI_GIT_AUTOINIT`) | same (`DSHD_GIT_AUTOINIT`) |
+| working loop (plan, `TODO.md`, quality gate, checkpoints) | seeded `APPEND_SYSTEM.md` | seeded `AGENTS.md` |
+| variable prefix | `PI_*` | `DSHD_*` |
 
 ## Disclaimer
 
