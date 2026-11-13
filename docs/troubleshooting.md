@@ -101,6 +101,45 @@ skipped by the update check and never moved. Existing pinned entries migrate onc
 `PI_PACKAGES_STAMP` bumps (re-`pi install npm:<name>` replaces the pinned entry; the installed
 copy upgrades on the next notice + `pi update --extensions`).
 
+## Plan mode (`/plan`)
+
+`@narumitw/pi-plan-mode` is installed as a default package (requires Pi ≥ 0.80.6; the wrapper
+installs Pi 1.5.2). It adds a read-only planning mode: `edit`/`write` are blocked, `bash` is
+restricted to inspection and reviewed checks, and implementation starts only after you approve the
+plan.
+
+```text
+/plan                  # menu: start/stop, review, implement here or in a fresh session
+/plan <prompt>         # start planning right away
+/plan tools            # per-session tool allowlist before starting
+/plan exit (alias off) # leave plan mode
+```
+
+- **There is no startup switch.** No Pi setting and no CLI flag turns plan mode on at launch
+  (`planModeOn` does not exist upstream — delete it if you ever added it). Start it per session;
+  the seeded `APPEND_SYSTEM.md` still instructs the agent to plan before non-trivial changes.
+- **Existing `~/.pi`:** the package arrives with the next start because `PI_PACKAGES_STAMP` was
+  bumped (the one-time `pi install` re-runs). Or install it yourself: `pi install npm:@narumitw/pi-plan-mode`.
+- **Options:** `~/.pi/agent/pi-plan-mode.json` (`defaultPlanTools`, `implementationPlanRetention`,
+  `defaultImplementationModel`/`ThinkingLevel`, `defaultPlanExportPath`, `toggleShortcut`,
+  JSON-only `safeSubcommands`). `/plan settings` edits the same file.
+- **MCP and extension tools are denied in plan mode by default.** If you use the built-in MCP
+  servers while planning, allow their names explicitly (`/plan tools`, or list them in
+  `defaultPlanTools`) — only after reviewing what those servers can do.
+
+## Git identity and auto-init
+
+The wrapper always injects `GIT_AUTHOR_NAME/EMAIL` and `GIT_COMMITTER_NAME/EMAIL` into project
+containers: host values, or `Pi Agent <agent@pi.dev>` when the host has none. Without that, git in
+the container refuses to commit.
+
+For a full `pi -m` project without a repository, the container runs — just before `exec pi` —
+`git init -q && git add -A && git commit -qm "checkpoint: initial workspace snapshot"`. It is a
+plain `git init`, so an existing `.gitignore` is honored; **without** a `.gitignore` everything in
+the project (including `node_modules`) lands in the snapshot commit. Add a `.gitignore` first, or
+disable the whole thing with `PI_GIT_AUTOINIT=0`. It never runs for `pi -m FILE...` mounts, with
+`PI_ALLOW_GIT=0` (`.git` hidden), or in the fixed Pi home.
+
 ## Context compression (`billion-context`)
 
 In-process Pi extension (no proxy/port). Adds `compress`, `decompress`, `search_context`,
