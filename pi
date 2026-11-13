@@ -115,6 +115,12 @@ PI_GIT_AUTOINIT="${PI_GIT_AUTOINIT:-1}"
 # und der mounts.conf-Einträge eingebunden.
 PI_SHOW_HIDDEN="${PI_SHOW_HIDDEN:-0}"
 
+# Mit "-ro" (oder PI_READ_ONLY=1) wird das Projekt schreibgeschützt eingebunden:
+# der ganze Ordner bei "pi -ro -m", die einzelnen Dateien bei "pi -ro -m DATEI...".
+# Pi-Home, ~/.pi und mounts.conf-Ziele bleiben beschreibbar; Git-Auto-Init entfällt,
+# weil das Repo nicht in das schreibgeschützte Projekt geschrieben werden kann.
+PI_READ_ONLY="${PI_READ_ONLY:-0}"
+
 # Git-Identität: aus der Host-Konfiguration übernehmen, per Umgebung
 # überschreibbar. Ohne Namen/E-Mail kann git keinen Commit erzeugen.
 PI_GIT_NAME="${PI_GIT_NAME:-$(git config --global user.name 2>/dev/null || true)}"
@@ -691,21 +697,28 @@ run_pi() {
 
         # Git-Auto-Init nur bei vollem Projekt-Mount und sichtbarem .git; die
         # eigentliche Initialisierung läuft im Container (vor "exec pi").
-        if [[ "${PI_MOUNT_CWD}" == "1" && "${PI_SELECTIVE}" != "1" && "${PI_ALLOW_GIT}" == "1" && "${PI_GIT_AUTOINIT}" == "1" ]]; then
+        # Mit "-ro" entfällt sie: das Repo läge im schreibgeschützten Projekt.
+        if [[ "${PI_MOUNT_CWD}" == "1" && "${PI_SELECTIVE}" != "1" && "${PI_ALLOW_GIT}" == "1" \
+              && "${PI_GIT_AUTOINIT}" == "1" && "${PI_READ_ONLY}" != "1" ]]; then
             DOCKER_ARGS+=(-e "PI_GIT_AUTOINIT=1")
         fi
 
         # Nur "pi -m" mountet ein Arbeitsverzeichnis. Mit Dateiargumenten
         # werden ausschließlich diese Dateien eingebunden.
         if [[ "${PI_MOUNT_CWD}" == "1" ]]; then
+            # "-ro" dem Container mitteilen (APPEND_SYSTEM.md verweist darauf);
+            # ohne Projekt-Mount hätte die Variable nichts zu bedeuten.
+            [[ "${PI_READ_ONLY}" == "1" ]] && DOCKER_ARGS+=(-e "PI_READ_ONLY=1")
+            local ro_suffix=""
+            [[ "${PI_READ_ONLY}" == "1" ]] && ro_suffix=":ro"
             if [[ "${PI_SELECTIVE}" == "1" ]]; then
                 DOCKER_ARGS+=(-v "${PI_FILES_ROOT}:${PI_WORK_DIR}")
                 local i
                 for ((i = 0; i < ${#PI_MOUNT_FILE_HOSTS[@]}; i++)); do
-                    DOCKER_ARGS+=(-v "${PI_MOUNT_FILE_HOSTS[$i]}:${PI_WORK_DIR}/${PI_MOUNT_FILE_TARGETS[$i]}")
+                    DOCKER_ARGS+=(-v "${PI_MOUNT_FILE_HOSTS[$i]}:${PI_WORK_DIR}/${PI_MOUNT_FILE_TARGETS[$i]}${ro_suffix}")
                 done
             else
-                DOCKER_ARGS+=(-v "$(pwd):${PI_WORK_DIR}")
+                DOCKER_ARGS+=(-v "$(pwd):${PI_WORK_DIR}${ro_suffix}")
 
                 # Ignores via /dev/null mounts. Mit PI_SHOW_HIDDEN=1 bleibt alles
                 # sichtbar; es werden weiterhin nur Projektpfade und mounts.conf-Ziele
@@ -738,6 +751,15 @@ run_pi() {
                         fi
                     done
                 fi
+            fi
+        fi
+
+        # Rückmeldung, damit "-ro" nicht stillschweigend wirkt.
+        if [[ "${PI_READ_ONLY}" == "1" ]]; then
+            if [[ "${PI_MOUNT_CWD}" == "1" ]]; then
+                echo "Project mounted read-only (\"-ro\"): writes and commits inside it will fail."
+            else
+                echo "Warning: -ro has no effect without -m (no project is mounted)." >&2
             fi
         fi
 
@@ -821,6 +843,11 @@ while [[ -n "${PI_COMMAND}" ]]; do
             ;;
         --show-hidden|show-hidden)
             PI_SHOW_HIDDEN=1
+            shift
+            PI_COMMAND="${1:-}"
+            ;;
+        -ro)
+            PI_READ_ONLY=1
             shift
             PI_COMMAND="${1:-}"
             ;;

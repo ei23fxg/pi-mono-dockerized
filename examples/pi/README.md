@@ -49,6 +49,11 @@ project. Active user lines are mounted into every container on the next start:
 /srv/data:/data
 ```
 
+`mounts.conf` cannot target the project itself (the project path is a reserved
+target). To mount the **project** read-only for one run, use the wrapper flag:
+`pi -ro -m` (or `PI_READ_ONLY=1`); it also applies `:ro` to the files of
+`pi -m DATEI...`.
+
 `APPEND_SYSTEM.md` is appended to Pi's system prompt for every session. For a
 complete replacement use `~/.pi/agent/SYSTEM.md`; for project-specific
 instructions use a project-root `AGENTS.md` (project `.pi` files are hidden by

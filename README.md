@@ -30,9 +30,13 @@ directory is **not** visible unless you use `-m`. All other Pi arguments are for
 | `pi -m README.md "MY FILE.md"` | Mounts only these files; everything else stays on the host |
 | `pi -m web` | Web UI scoped to the current project |
 | `pi --show-hidden -m` | One-off: also expose normally hidden project files (`.env`, `.pi`, …) |
+| `pi -ro -m` | Mount the project **read-only**; writes/commits inside it fail (Pi home and `mounts.conf` targets stay writable) |
 | `pi rebuild` | Force-rebuild the Docker image (`PI_RUST_VERSION=1.83 pi rebuild` to pin Rust) |
 
 - `-m` is a wrapper flag; Pi's own model flag stays `--model`.
+- `-ro` mounts the project `:ro` (also for `pi -m FILE...`). Pi home, `~/.pi`, the session
+  mount and `mounts.conf` targets stay writable, so sessions/settings still work; git
+  auto-init is skipped and any write/commit inside the project fails.
 - `web` directly after `-m` is always the Web UI shortcut, never a path — even if your project contains a file or folder named `web`. To mount such a path, write `./web` (or any path that isn't the bare word).
 - With file arguments, leading existing files are mounted individually; use `--` before a prompt that could be mistaken for a filename.
 - A full `pi -m` mount hides `.env`, `.secret`, `.deploy`, `.build`, `.vscode`, ignore-files and `.pi/` (except `.pi/APPEND_SYSTEM.md` and `.pi/SYSTEM.md`). `.git`, `.gitignore`, `.gitmodules` are visible by default — set `PI_ALLOW_GIT=0` to hide them.
@@ -64,6 +68,11 @@ pi -m -r web                     # pick a project session, open Web UI
 # One-off exposure of default-hidden project files
 pi --show-hidden -m              # .env, .pi, etc. visible for this run
 pi --show-hidden -m web          # combinable with other wrapper commands
+
+# Read-only project mount (enforced by the container, not just by the prompt)
+pi -ro -m                        # agent reads the project but cannot write it
+pi -ro -m README.md TEXT.md      # the selected files are mounted :ro
+pi -ro -m web                    # combinable like --show-hidden
 
 # Non-interactive (print mode)
 pi -m -p "fix the bug in src/app.ts"
@@ -186,6 +195,7 @@ require deleting the generated config entry.
 | `PI_ALLOW_GIT` | `1` | `0` hides `.git`, `.gitignore`, `.gitmodules` |
 | `PI_GIT_AUTOINIT` | `1` | `0` skips the initial `git init` + snapshot commit for projects without a repository |
 | `PI_SHOW_HIDDEN` | `0` | `1` exposes all hidden project files for one full-project run |
+| `PI_READ_ONLY` | `0` | `1` mounts the project `:ro` — same as the `-ro` flag |
 | `PI_GIT_NAME` / `PI_GIT_EMAIL` | host values | Commit identity inside the container |
 | `PI_HOME_DIR` | `~/pi-home` | Host source of the fixed Pi home — **first run only**; afterwards the `mounts.conf` entry is authoritative |
 | `PI_MOUNT_CWD` | `0` | `1` behaves like `pi -m` always |

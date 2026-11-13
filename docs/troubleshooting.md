@@ -228,6 +228,28 @@ in the `pi` script, or keep secrets outside the project. `pi --show-hidden -m` r
 project-relative ignore mounts for one full-project run (selective file mounts unaffected;
 overrides `PI_ALLOW_GIT=0`; hidden paths may contain credentials).
 
+## Read-only project mount (`-ro`)
+
+`pi -ro -m` (or `PI_READ_ONLY=1`) appends `:ro` to the project bind mount, and to each file
+mount of `pi -m FILE...`. This is enforced by Docker, so it also holds for a model that ignores
+the prompt rules: `edit`/`write` fail, and so do `git add`/`git commit` inside the project.
+
+Stay writable on purpose: `~/pi-home` (container `$HOME`), `~/.pi` (settings, sessions,
+packages) and the `mounts.conf` targets — otherwise sessions could not be saved. Git auto-init is
+skipped under `-ro` (the repo would sit in the read-only project), and the container gets
+`PI_READ_ONLY=1`, which the seeded `APPEND_SYSTEM.md` refers to.
+
+Why a flag and not just a `mounts.conf` line? `mounts.conf` entries cannot target the project
+directory — `PI_WORK_DIR` is a reserved mount target — so extra `:ro` entries only help for
+*additional* directories:
+
+```text
+~/reference-docs:/reference:ro
+```
+
+Useful combination: `/plan` (extension blocks edits) **+** `-ro` (Docker blocks writes) for
+reviewing a repository you do not want touched.
+
 ## MCP alternative
 
 Pi 1.x has built-in MCP. If you prefer `pi-mcp-extension`: install it and disable the built-in
