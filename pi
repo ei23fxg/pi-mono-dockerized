@@ -105,6 +105,11 @@ PI_NETWORK_MODE="host"
 # Mit PI_ALLOW_GIT=0 werden .git, .gitignore und .gitmodules verborgen.
 PI_ALLOW_GIT="${PI_ALLOW_GIT:-1}"
 
+# Ohne Git-Repo im Projekt: beim vollen Projekt-Start ein Repo mit erstem
+# Snapshot-Commit anlegen (Basis für Diffs/Rollbacks nach Agent-Schritten).
+# PI_GIT_AUTOINIT=0 deaktiviert das.
+PI_GIT_AUTOINIT="${PI_GIT_AUTOINIT:-1}"
+
 # Mit PI_SHOW_HIDDEN=1 (oder "pi --show-hidden") werden alle standardmäßig
 # versteckten Projektdateien sichtbar. Es wird nichts außerhalb des Projekts
 # und der mounts.conf-Einträge eingebunden.
@@ -678,8 +683,17 @@ run_pi() {
         DOCKER_ARGS+=(-v "${session_dir}:/home/hostuser/.pi/agent/sessions/${session_name}")
         DOCKER_ARGS+=(-e "PI_CODING_AGENT_SESSION_DIR=/home/hostuser/.pi/agent/sessions/${session_name}")
         DOCKER_ARGS+=(-e "PI_PROJECT_NAME=${project_name}")
-        [[ -n "${PI_GIT_NAME}" ]] && DOCKER_ARGS+=(-e "GIT_AUTHOR_NAME=${PI_GIT_NAME}" -e "GIT_COMMITTER_NAME=${PI_GIT_NAME}")
-        [[ -n "${PI_GIT_EMAIL}" ]] && DOCKER_ARGS+=(-e "GIT_AUTHOR_EMAIL=${PI_GIT_EMAIL}" -e "GIT_COMMITTER_EMAIL=${PI_GIT_EMAIL}")
+        # Git-Identität immer durchreichen: Host-Werte, sonst "Pi Agent"
+        # (ohne Identität kann git keinen Commit erzeugen).
+        local git_name="${PI_GIT_NAME:-Pi Agent}" git_email="${PI_GIT_EMAIL:-agent@pi.dev}"
+        DOCKER_ARGS+=(-e "GIT_AUTHOR_NAME=${git_name}" -e "GIT_COMMITTER_NAME=${git_name}"
+            -e "GIT_AUTHOR_EMAIL=${git_email}" -e "GIT_COMMITTER_EMAIL=${git_email}")
+
+        # Git-Auto-Init nur bei vollem Projekt-Mount und sichtbarem .git; die
+        # eigentliche Initialisierung läuft im Container (vor "exec pi").
+        if [[ "${PI_MOUNT_CWD}" == "1" && "${PI_SELECTIVE}" != "1" && "${PI_ALLOW_GIT}" == "1" && "${PI_GIT_AUTOINIT}" == "1" ]]; then
+            DOCKER_ARGS+=(-e "PI_GIT_AUTOINIT=1")
+        fi
 
         # Nur "pi -m" mountet ein Arbeitsverzeichnis. Mit Dateiargumenten
         # werden ausschließlich diese Dateien eingebunden.
@@ -754,7 +768,12 @@ run_pi() {
             fi
         done
         docker run "${DOCKER_ARGS[@]}" "${PI_IMAGE_NAME}" \
-            /bin/sh -c "cd \"\$1\" && shift && exec pi ${approve_flag} \"\$@\"" pi "${run_dir}" "$@"
+            /bin/sh -c "cd \"\$1\" && shift
+# Git-Basis für Diffs/Rollbacks: Repo ohne Historie einmalig mit Snapshot anlegen.
+if [ \"\${PI_GIT_AUTOINIT:-0}\" = 1 ] && [ ! -d .git ]; then
+    git init -q && git add -A && git commit -qm 'checkpoint: initial workspace snapshot' >/dev/null || true
+fi
+exec pi ${approve_flag} \"\$@\"" pi "${run_dir}" "$@"
     else
         docker run "${DOCKER_ARGS[@]}" "${PI_IMAGE_NAME}" \
             /bin/sh -c 'exec pi "$@"' pi "$@"

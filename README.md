@@ -177,6 +177,7 @@ require deleting the generated config entry.
 | Variable | Default | Purpose |
 |---|---|---|
 | `PI_ALLOW_GIT` | `1` | `0` hides `.git`, `.gitignore`, `.gitmodules` |
+| `PI_GIT_AUTOINIT` | `1` | `0` skips the initial `git init` + snapshot commit for projects without a repository |
 | `PI_SHOW_HIDDEN` | `0` | `1` exposes all hidden project files for one full-project run |
 | `PI_GIT_NAME` / `PI_GIT_EMAIL` | host values | Commit identity inside the container |
 | `PI_HOME_DIR` | `~/pi-home` | Host source of the fixed Pi home — **first run only**; afterwards the `mounts.conf` entry is authoritative |
@@ -189,10 +190,17 @@ require deleting the generated config entry.
 ## Git
 
 The agent uses plain `git` via its bash tool. Local commits work out of the box with your host
-identity (`git config --global user.name/user.email`, or `PI_GIT_NAME`/`PI_GIT_EMAIL`).
+identity (`git config --global user.name/user.email`, or `PI_GIT_NAME`/`PI_GIT_EMAIL`); with no
+host identity the container falls back to `Pi Agent <agent@pi.dev>` so commits never fail. A full
+`pi -m` project that is **not** a repository yet gets `git init` plus an
+`initial workspace snapshot` commit right before Pi starts — every later agent step then has a
+diffable, rollbackable base. Set `PI_GIT_AUTOINIT=0` to skip it (never runs for `pi -m FILE...`
+mounts or with `PI_ALLOW_GIT=0`).
 **Push is not enabled** — the container has no SSH keys or credential helpers; provide
 credentials deliberately if you want it. Put your commit conventions into the project's
-`AGENTS.md`.
+`AGENTS.md`. The seeded system prompt additionally asks the agent to work in
+plan → `TODO.md` → quality-gate → checkpoint cycles (see
+[`examples/pi/agent/APPEND_SYSTEM.md`](examples/pi/agent/APPEND_SYSTEM.md)).
 
 ## Web UI
 
