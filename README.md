@@ -211,8 +211,10 @@ plan → `TODO.md` → quality-gate → checkpoint cycles (see
 - From another machine: tunnel, e.g. `ssh -N -L 33461:127.0.0.1:33461 user@dockerhost`.
 - The TUI must stay open while you use the Web UI; the service stops with it.
 
-The wrapper always uses Docker host networking so the URL works on the host. The Web UI is not
-meant for the public internet; its terminals run with your container user's permissions.
+The wrapper always uses Docker host networking so the URL works on the host — no `-p`/`ports:`
+mapping is needed, and none would help: `pi-webapp` binds loopback on a freely chosen port, not a
+fixed 3000. The Web UI is not meant for the public internet; its terminals run with your container
+user's permissions.
 
 ## Privacy & sessions — how isolation works
 
