@@ -132,7 +132,7 @@ PI_NPM_ENV=(
 # Rust-Version für das Image (per Umgebung überschreibbar, z. B. PI_RUST_VERSION=1.83)
 PI_RUST_VERSION="${PI_RUST_VERSION:-stable}"
 # Ändert sich der Stamp (Dockerfile/Rust-Version), wird das Image automatisch neu gebaut
-PI_BUILD_STAMP="5-${PI_RUST_VERSION}"
+PI_BUILD_STAMP="6-${PI_RUST_VERSION}"
 
 PI_DEFAULT_IGNORED_FILES=(.env .deploy .secret .git .build .vscode .gitmodules .pi .aiignore .aiexclude .copilotignore .gitignore .geminiignore .codeiumignore .cursorignore .DS_Store)
 PI_EMPTY_DIR=$(mktemp -d)
@@ -167,7 +167,7 @@ FROM node:22-bookworm-slim
 # Grundlegende System- & Dev-Tools
 RUN DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y --no-install-recommends \\
     bash openssh-server curl wget git gh make gcc g++ gawk ripgrep jq ca-certificates \\
-    less procps unzip zip \\
+    less procps unzip zip shellcheck \\
     ffmpeg imagemagick pandoc \\
     python3 python3-pip python3-venv python3-full \\
     golang \\
